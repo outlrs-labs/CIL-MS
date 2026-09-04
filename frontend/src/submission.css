@@ -1,0 +1,68 @@
+.upload-toolbar {
+  display: grid;
+  grid-template-columns:minmax(220px,320px) minmax(260px,420px) 1fr auto;
+  align-items: flex-end;
+  gap: 13px;
+  min-height:calc(100dvh - 150px);
+}
+.upload-toolbar .upload-entity { width:100%; margin:0; }
+.upload-toolbar .upload-family {
+  width: min(420px, 100%);
+  margin: 0;
+}
+.upload-toolbar select {
+  min-height: 40px;
+}
+.upload-toolbar .button {
+  min-height: 40px;
+  white-space: nowrap;
+}
+.upload-toolbar .version-control-link {
+  grid-column:4;
+  align-self:end;
+}
+.upload-entry{grid-column:1/-1;align-self:center;justify-self:center;width:min(620px,100%);padding:42px 34px;text-align:center;display:flex;flex-direction:column;align-items:center;gap:13px;}
+.upload-entry-icon{display:grid;place-items:center;width:64px;height:64px;background:var(--subtle);color:var(--accent);border:1px solid var(--line);}
+.upload-entry h2{margin:3px 0 0;font-size:24px;}
+.upload-entry p{margin:0;color:var(--muted);line-height:1.6;}
+.upload-entry p strong{color:var(--text);}
+.upload-entry-button{margin-top:8px;min-width:220px;justify-content:center;min-height:46px!important;}
+.upload-entry-guidance{display:flex;flex-wrap:wrap;justify-content:center;gap:7px 16px;margin-top:8px;color:var(--muted);font-size:12px;line-height:1.5;}
+.upload-entry-guidance span:not(:last-child)::after{content:'·';margin-left:16px;color:var(--line-strong);}
+.version-control-view {
+  display: grid;
+  gap: 21px;
+  min-width: 0;
+}
+.version-control-heading {
+  display: flex;
+  align-items: center;
+  gap: 21px;
+}
+.version-control-heading h2 {
+  margin: 0;
+}
+.version-schedule {
+  padding: 13px 21px;
+  border-top: 1px solid var(--line);
+  border-bottom: 1px solid var(--line);
+}
+.version-schedule summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: var(--type-small);
+}
+.version-control-view .section-heading {
+  flex-wrap: wrap;
+  gap: 13px;
+}
+@media (max-width: 600px) {
+  .upload-toolbar { grid-template-columns:1fr;align-items:stretch;min-height:calc(100dvh - 120px); }
+  .upload-toolbar .upload-family { width: 100%; }
+  .upload-toolbar .version-control-link,.upload-entry{grid-column:1;}
+  .upload-toolbar .version-control-link{grid-row:3;margin:0;justify-self:start;}
+  .upload-entry{padding:30px 18px;}
+  .upload-entry-guidance{display:grid;}
+  .upload-entry-guidance span::after{display:none;}
+  .version-control-heading { flex-wrap: wrap; gap: 13px; }
+}

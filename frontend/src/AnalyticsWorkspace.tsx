@@ -1,0 +1,42 @@
+import type {ToolView} from './WorkspaceChrome';
+import {SubmissionWorkspace} from './SubmissionWorkspace';
+import {VaultWorkspace} from './VaultWorkspace';
+import {ExtractionWorkspace} from './ExtractionWorkspace';
+import {AnalysisDashboard,type AnalysisCatalog as Catalog,type AnalysisSource as Source,type SavedAnalysis as Analysis} from './AnalysisDashboard';
+import {useEffect,useRef,useState} from 'react';
+import {ArrowRight,Download,Maximize2,FileText,AlertCircle} from 'lucide-react';
+type Report={id:string;title:string;created:number;series:string;version:number;previous_id:string|null;entity:string;family:string};
+async function call<T>(token:string,path:string,method='GET',body?:unknown):Promise<T>{
+ const r=await fetch('/api/analytics'+path,{method,headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
+ const d=await r.json();if(!r.ok)throw new Error(typeof d.detail==='string'?d.detail:'The request could not be completed.');return d;
+}
+const message=(e:unknown)=>e instanceof Error?e.message:'Request failed.';
+export function AnalyticsWorkspace({token,entityCode,technical,view}:{token:string;entityCode:string;technical:boolean;view:ToolView}){
+ const [catalog,setCatalog]=useState<Catalog|null>(null),[analyses,setAnalyses]=useState<Analysis[]>([]),[reports,setReports]=useState<Report[]>([]),[error,setError]=useState(''),[busy,setBusy]=useState(false),[status,setStatus]=useState<{online:boolean;models:unknown[]}|null>(null);
+ const [entities,setEntities]=useState<string[]>(technical?['ECL','BCCL','CCL','NCL','WCL','SECL','MCL']:[entityCode]),[family,setFamily]=useState('all'),[selected,setSelected]=useState<Record<string,string>>({}),[title,setTitle]=useState(technical?'CMPDI consolidated analysis':entityCode+' report analysis'),[period,setPeriod]=useState(''),[target,setTarget]=useState(technical?'CMPDI':entityCode),[targetFamily,setTargetFamily]=useState(technical?'annual':'production_offtake');
+ const [active,setActive]=useState<Analysis|null>(null),[workbench,setWorkbench]=useState('');const frame=useRef<HTMLIFrameElement>(null);const [includeHistory,setIncludeHistory]=useState(false);
+ useEffect(()=>{if(workbench&&view==='analysis')frame.current?.closest('.workbench-panel')?.scrollIntoView({block:'start'});},[workbench,view]);
+ async function refresh(){setError('');try{const [c,a,r,s]=await Promise.all([call<Catalog>(token,'/catalog?include_history='+includeHistory),call<Analysis[]>(token,'/analyses'),call<Report[]>(token,'/reports'),call<{online:boolean;models:unknown[]}>(token,'/status')]);setCatalog(c);setAnalyses(a);setReports(r);setStatus(s);}catch(e){setError(message(e));}}
+ useEffect(()=>{void refresh();},[token,includeHistory]);
+ useEffect(()=>{if(!active||active.status!=='importing')return;let done=false;const interval=setInterval(()=>{call<Analysis>(token,'/analyses/'+active.id).then(a=>{if(!done){setActive(a);if(a.status!=='importing'){void refresh();if(a.status==='ready')void open(a);}}}).catch(e=>{if(!done)setError(message(e));});},2500);return()=>{done=true;clearInterval(interval);};},[active?.id,active?.status,token]);
+ async function create(){setBusy(true);setError('');try{const a=await call<Analysis>(token,'/analyses','POST',{title,period,scope_entities:entities,target_entity:target,target_family:targetFamily,inputs:Object.entries(selected).map(([file_id,sheet])=>({file_id,sheet:sheet||null}))});setActive(a);setWorkbench('');await refresh();if(a.status==='ready')await open(a);}catch(e){setError(message(e));}finally{setBusy(false);}}
+ async function open(a:Analysis){setBusy(true);setError('');try{const data=await call<{url:string}>(token,`/analyses/${a.id}/workbench-session`,'POST',{});setActive(a);setWorkbench(data.url);}catch(e){setError(message(e));}finally{setBusy(false);}}
+ async function download(id:string,artifact:string){try{const r=await fetch(`/api/analytics/reports/${id}/${artifact}`,{headers:{Authorization:`Bearer ${token}`}});if(!r.ok)throw new Error('Download unavailable.');const url=URL.createObjectURL(await r.blob());const a=document.createElement('a');a.href=url;a.download=id+'-'+artifact;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}catch(e){setError(message(e));}}
+ return <div className="analytics-workspace" data-view={view}>
+ {view==='inputs'&&<SubmissionWorkspace token={token} entityCode={entityCode} technical={technical} onUploaded={()=>void refresh()}/>} 
+ {view==='vault'&&<VaultWorkspace token={token} entityCode={entityCode} canFilterSubsidiary={technical}/>} 
+ {view==='extraction'&&<ExtractionWorkspace token={token} onChange={()=>void refresh()}/>}
+ {error&&view==='analysis'&&<div className="error-box" role="alert"><AlertCircle size={18}/>{error}</div>}
+ {view==='analysis'&&status&&!status.online&&<div className="notice"><AlertCircle/><div><strong>Analytics engine is offline</strong><span>Start the local analytics service.</span></div></div>}
+ {view==='analysis'&&status?.online&&!status.models.length&&<div className="notice"><AlertCircle/><div><strong>AI model not configured</strong><span>Choose a model to enable AI.</span></div></div>}
+ <div className="analytics-content">
+ {workbench&&active?<section className="analysis-workbench"><div className="analysis-workbench-bar"><button className="button secondary" onClick={()=>{setWorkbench('');void refresh();}}>Change data</button><strong>{active.title}</strong><button className="text-button" onClick={()=>void frame.current?.requestFullscreen()}><Maximize2 size={16}/>Expand</button></div><iframe ref={frame} title="CIL analytics workbench" src={workbench} allow="fullscreen; clipboard-write"/></section>:<>
+ <AnalysisDashboard catalog={catalog} technical={technical} entityCode={entityCode} selected={selected} setSelected={setSelected} entities={entities} setEntities={setEntities} family={family} setFamily={setFamily} title={title} setTitle={setTitle} period={period} setPeriod={setPeriod} target={target} setTarget={setTarget} targetFamily={targetFamily} setTargetFamily={setTargetFamily} busy={busy} online={!!status?.online} analyses={analyses} onCreate={()=>void create()} onOpen={a=>{setActive(a);if(a.status==='ready')void open(a);}} onRefresh={refresh} token={token}/>
+ {active&&active.status!=='ready'&&<section className="panel analysis-state"><strong>{active.title}</strong><span>{active.status==='importing'?'Preparing the selected data…':active.error||'Analysis unavailable.'}</span></section>}
+ {active?.status==='ready'&&<section className="panel analysis-state"><strong>{active.title}</strong><button className="button primary" disabled={busy} onClick={()=>void open(active)}>{busy?'Opening analysis…':<>Open analysis <ArrowRight size={16}/></>}</button></section>}
+ </>}
+ </div>
+ <div hidden={view!=='reports'}>
+ <section className="panel"><div className="section-heading"><div><h2><FileText size={19}/> Generated reports</h2></div><button className="text-button" onClick={()=>void refresh()}>Refresh reports</button></div>{reports.length?reports.map(r=><div className="saved-analysis" key={r.id}><div><strong>{r.title}</strong><small>{r.entity} · {r.family} · Revision {r.version||1} · {new Date(r.created*1000).toLocaleString()}</small></div><div className="analytics-actions">{[['report.zip','Complete package'],['report.png','Visual report'],['report.md','Markdown'],['manifest.json','Sources']].map(([file,label])=><button key={file} className="text-button" onClick={()=>void download(r.id,file)}><Download size={15}/>{label}</button>)}</div></div>):<div className="empty small"><p>No saved reports. Create one in Analyse.</p></div>}</section>
+ </div></div>;
+}

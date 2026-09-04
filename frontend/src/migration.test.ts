@@ -1,0 +1,42 @@
+// @vitest-environment node
+import {PGlite} from '@electric-sql/pglite';
+import {readFileSync} from 'node:fs';
+
+test('migration seeds one holding, seven operating subsidiaries and CMPDI',async()=>{
+ const db=new PGlite();
+ await db.exec(`create role anon; create role authenticated; create role service_role bypassrls;
+   create schema auth; create table auth.users(id uuid primary key,email text,email_confirmed_at timestamptz);
+   create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;`);
+ const migration=readFileSync(new URL('../../supabase/migrations/001_identity.sql',import.meta.url),'utf8');
+ await db.exec(migration);
+ const result=await db.query<{kind:string;count:number}>('select kind,count(*)::int as count from public.entities group by kind order by kind');
+ expect(result.rows).toEqual([{kind:'holding',count:1},{kind:'operating',count:7},{kind:'technical',count:1}]);
+ await db.exec(`insert into auth.users values('20000000-0000-0000-0000-000000000000','admin@example.test',now());
+   select public.bootstrap_admin('20000000-0000-0000-0000-000000000000','CIL Administrator');`);
+ const admins=await db.query<{count:number}>('select count(*)::int as count from public.profiles where role=\'cil_admin\'');
+ expect(admins.rows[0].count).toBe(1);
+ await expect(db.exec(`insert into auth.users values('30000000-0000-0000-0000-000000000000','other@example.test',now());
+   select public.bootstrap_admin('30000000-0000-0000-0000-000000000000','Other');`)).rejects.toThrow();
+ await db.exec(`insert into auth.users values('40000000-0000-0000-0000-000000000000','member@example.com',now()),('50000000-0000-0000-0000-000000000000','cmpdi@example.com',now());
+ select public.provision_member('20000000-0000-0000-0000-000000000000','40000000-0000-0000-0000-000000000000','Member',(select id from entities where code='BCCL'));
+ select public.provision_member('20000000-0000-0000-0000-000000000000','50000000-0000-0000-0000-000000000000','Coordinator',(select id from entities where code='CMPDI'));
+ select public.finish_password_change('40000000-0000-0000-0000-000000000000');
+ select public.finish_password_change('50000000-0000-0000-0000-000000000000');
+ grant usage on schema auth to authenticated;
+ set role authenticated;
+ set request.jwt.claim.sub='40000000-0000-0000-0000-000000000000';`);
+ expect((await db.query('select code from entities')).rows).toEqual([{code:'BCCL'}]);
+ expect((await db.query('select id from profiles')).rows).toHaveLength(1);
+ await expect(db.exec("update profiles set role='cil_admin'")).rejects.toThrow();
+ await expect(db.exec("select public.bootstrap_admin('40000000-0000-0000-0000-000000000000','Attack')")).rejects.toThrow();
+ await db.exec("set request.jwt.claim.sub='50000000-0000-0000-0000-000000000000'");
+ expect((await db.query('select code from entities')).rows).toHaveLength(9);
+ expect((await db.query('select id from profiles')).rows).toHaveLength(1);
+ await db.exec("set request.jwt.claim.sub='20000000-0000-0000-0000-000000000000'");
+ expect((await db.query('select id from profiles')).rows).toHaveLength(3);
+ await db.exec("reset role; update profiles set active=false where id='40000000-0000-0000-0000-000000000000'; set role authenticated; set request.jwt.claim.sub='40000000-0000-0000-0000-000000000000'");
+ expect((await db.query('select code from entities')).rows).toHaveLength(0);
+ await db.exec('reset role');
+ await expect(db.exec("update profiles set active=false where role='cil_admin'")).rejects.toThrow();
+ await db.close();
+},20000);
