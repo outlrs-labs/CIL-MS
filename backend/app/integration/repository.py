@@ -39,6 +39,7 @@ class Repository:
   with self.db() as db:
    db.execute('create table if not exists analyses(id text primary key, owner text not null, payload text not null)')
    db.execute('create table if not exists reports(id text primary key, owner text not null, path text not null, title text not null, created real not null)')
+   db.execute('create table if not exists audit_reviews(report_id text primary key,submitter text not null,entity text not null,status text not null,assistant_reviewer text,manager_reviewer text,comment text not null default "",updated real not null)')
  def db(self):
   db=sqlite3.connect(self.processing/'catalog.sqlite3',timeout=30);db.execute('pragma journal_mode=WAL');return db
  def initialize(self):
@@ -95,8 +96,8 @@ class Repository:
    db.execute('insert into reports values(?,?,?,?,?)',(id,owner,str(path),title,time.time()))
    if revision:db.execute('insert into report_revisions values(?,?,?,?)',(id,revision['series'],revision['version'],revision['previous_id']))
  def reports(self,owner):
-  with self.db() as db:rows=db.execute('select id,title,created from reports'+(' where owner=?' if owner else '')+' order by created desc',(owner,) if owner else ()).fetchall()
-  items=[dict(zip(('id','title','created'),r)) for r in rows]
+  with self.db() as db:rows=db.execute('select id,title,created,owner from reports'+(' where owner=?' if owner else '')+' order by created desc',(owner,) if owner else ()).fetchall()
+  items=[dict(zip(('id','title','created','owner'),r)) for r in rows]
   from .submissions import initialize
   initialize(self)
   with self.db() as db:
@@ -110,3 +111,37 @@ class Repository:
   path=Path(row[0]).resolve()
   if not path.is_relative_to(self.root):raise HTTPException(403,'Invalid report location.')
   return path
+ def submit_audit(self,report_id,submitter,entity):
+  if entity not in OPERATING:raise HTTPException(422,'Choose an operating subsidiary as the report destination before sending it for audit.')
+  now=time.time()
+  with self.db() as db:
+   db.execute('begin immediate')
+   owner=db.execute('select owner from reports where id=?',(report_id,)).fetchone()
+   if not owner:raise HTTPException(404,'Report not found.')
+   if owner[0]!=submitter:raise HTTPException(403,'Only the report author can submit it for audit.')
+   current=db.execute('select status from audit_reviews where report_id=?',(report_id,)).fetchone()
+   if current and current[0] not in ('rejected','changes_requested'):raise HTTPException(409,'This report is already in audit.')
+   db.execute('insert into audit_reviews(report_id,submitter,entity,status,updated) values(?,?,?,?,?) on conflict(report_id) do update set status="pending_review",assistant_reviewer=null,manager_reviewer=null,comment="",updated=excluded.updated',(report_id,submitter,entity,'pending_review',now))
+  return self.audit(report_id)
+ def audit(self,report_id):
+  with self.db() as db:row=db.execute('select a.report_id,r.title,r.created,a.submitter,a.entity,a.status,a.assistant_reviewer,a.manager_reviewer,a.comment,a.updated from audit_reviews a join reports r on r.id=a.report_id where a.report_id=?',(report_id,)).fetchone()
+  if not row:raise HTTPException(404,'Audit item not found.')
+  return dict(zip(('report_id','title','created','submitter','entity','status','assistant_reviewer','manager_reviewer','comment','updated'),row))
+ def audits(self,scope=None):
+  with self.db() as db:rows=db.execute('select a.report_id,r.title,r.created,a.submitter,a.entity,a.status,a.assistant_reviewer,a.manager_reviewer,a.comment,a.updated from audit_reviews a join reports r on r.id=a.report_id'+(' where a.entity=?' if scope else '')+' order by a.updated desc',(scope,) if scope else ()).fetchall()
+  keys=('report_id','title','created','submitter','entity','status','assistant_reviewer','manager_reviewer','comment','updated')
+  return [dict(zip(keys,row)) for row in rows]
+ def decide_audit(self,report_id,reviewer,position,decision,comment):
+  if position!='manager':raise HTTPException(403,'Only the subsidiary manager can review audit requests.')
+  item=self.audit(report_id)
+  if item['submitter']==reviewer:raise HTTPException(403,'The report author cannot audit their own report.')
+  if item['status'] not in ('pending_review','awaiting','assistant_manager_pending','manager_pending'):raise HTTPException(409,'This request is already complete.')
+  status={'approve':'submitted_to_cmpdi','await':'awaiting','reject':'rejected'}.get(decision)
+  if not status:raise HTTPException(422,'Choose Approve, Await or Reject.')
+  column='manager_reviewer'
+  if decision not in ('approve','await','reject'):raise HTTPException(422,'Choose Approve, Await or Reject.')
+  if decision=='reject' and not comment.strip():raise HTTPException(422,'Explain what needs to change.')
+  with self.db() as db:
+   result=db.execute(f'update audit_reviews set status=?,{column}=?,comment=?,updated=? where report_id=? and status=?',(status,reviewer,comment.strip(),time.time(),report_id,item['status']))
+   if result.rowcount!=1:raise HTTPException(409,'This report has already been reviewed. Refresh the queue.')
+  return self.audit(report_id)

@@ -27,6 +27,7 @@ export function SubmissionWorkspace({token,entityCode,technical,onUploaded}:{tok
  const format={daily:'YYYY-MM-DD',monthly:'YYYY-MM',quarterly:'YYYY-Q1','half-yearly':'YYYY-H1',annual:'YYYY'}[cadence];
  return <div className="submission-workspace">
   {!showVersions?<div className="upload-toolbar">
+   <header className="upload-page-heading"><h1>Upload</h1><p>Submit a versioned report package for review and analysis.</p></header>
    {technical&&<label className="field upload-entity">Subsidiary<select disabled={!schedule} value={entity} onChange={e=>{const next=e.target.value;setEntity(next);const nextFamilies=schedule?.subsidiaries[next]||{};const nextFamily=Object.keys(nextFamilies)[0]||'production_offtake';setFamily(nextFamily);setCadence(Object.keys(nextFamilies[nextFamily]?.cycles||{})[0]||'daily');}}>{Object.keys(schedule?.subsidiaries||{}).map(x=><option key={x}>{x}</option>)}</select></label>}
    <label className="field upload-family">Report family<select disabled={!schedule} value={family} onChange={e=>{setFamily(e.target.value);setCadence(Object.keys(families[e.target.value].cycles)[0]);}}>{!schedule&&<option>Loading…</option>}{Object.entries(families).map(([k,v])=><option key={k} value={k}>{v.name}</option>)}</select></label>
    <button className="button secondary version-control-link" onClick={()=>{setError('');setShowVersions(true);}}><History size={16}/>Version Control</button>

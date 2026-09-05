@@ -118,4 +118,5 @@ def test_report_revision_chains_and_entity_access(repo):
   assert c.get('/api/analytics/reports').json()==[]
   assert c.get('/api/analytics/reports/'+one+'/report.md').status_code==404
   app.dependency_overrides[principal]=lambda:actor('CMPDI','cmpdi')
-  assert len(c.get('/api/analytics/reports').json())==2
+  assert c.get('/api/analytics/reports').json()==[]
+  assert c.get('/api/analytics/reports/'+one+'/report.md').status_code==404

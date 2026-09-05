@@ -49,6 +49,7 @@ class NewMember(StrictModel):
     full_name: str = Field(min_length=2,max_length=100)
     entity_id: UUID
     temporary_password: SecretStr
+    review_position: str = Field(default='contributor',pattern='^(contributor|assistant_manager|manager)$')
 
     @field_validator('temporary_password')
     @classmethod
@@ -59,6 +60,9 @@ class NewMember(StrictModel):
 
 class ActivePatch(StrictModel):
     active: bool
+
+class ReviewPositionPatch(StrictModel):
+    review_position: str = Field(pattern='^(contributor|assistant_manager|manager)$')
 
 class EntityInput(StrictModel):
     code: str = Field(pattern=r'^[A-Z][A-Z0-9_]{1,15}$')
@@ -107,6 +111,8 @@ async def create_member(data: NewMember,p: Principal = Depends(admin),db: Gatewa
     uid = user['id']
     try:
         await db.rpc('provision_member',{'p_actor':p.id,'p_user_id':uid,'p_name':data.full_name,'p_entity':str(data.entity_id)})
+        if rows[0]['kind']=='operating':
+            await db.rpc('set_review_position',{'p_actor':p.id,'p_user_id':uid,'p_position':data.review_position})
     except HTTPException:
         # Retain the unassigned Auth user on ambiguous failure. Never delete a user
         # that a committed RPC may already have provisioned. No profile = no access.
@@ -118,6 +124,11 @@ async def set_active(user_id: UUID,data: ActivePatch,p: Principal = Depends(admi
     if str(user_id)==p.id:
         raise HTTPException(409,'The singleton administrator cannot be disabled.')
     await db.rpc('set_member_active',{'p_actor':p.id,'p_user_id':str(user_id),'p_active':data.active})
+    return {'ok':True}
+
+@app.patch('/api/admin/users/{user_id}/review-position')
+async def set_review_position(user_id:UUID,data:ReviewPositionPatch,p:Principal=Depends(admin),db:Gateway=Depends(gateway)):
+    await db.rpc('set_review_position',{'p_actor':p.id,'p_user_id':str(user_id),'p_position':data.review_position})
     return {'ok':True}
 
 @app.post('/api/admin/entities',status_code=201)

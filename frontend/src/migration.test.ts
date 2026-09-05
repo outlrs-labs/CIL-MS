@@ -9,6 +9,8 @@ test('migration seeds one holding, seven operating subsidiaries and CMPDI',async
    create function auth.uid() returns uuid language sql stable as $$ select nullif(current_setting('request.jwt.claim.sub',true),'')::uuid $$;`);
  const migration=readFileSync(new URL('../../supabase/migrations/001_identity.sql',import.meta.url),'utf8');
  await db.exec(migration);
+ const auditMigration=readFileSync(new URL('../../supabase/migrations/002_audit_roles.sql',import.meta.url),'utf8');
+ await db.exec(auditMigration);
  const result=await db.query<{kind:string;count:number}>('select kind,count(*)::int as count from public.entities group by kind order by kind');
  expect(result.rows).toEqual([{kind:'holding',count:1},{kind:'operating',count:7},{kind:'technical',count:1}]);
  await db.exec(`insert into auth.users values('20000000-0000-0000-0000-000000000000','admin@example.test',now());
@@ -20,6 +22,7 @@ test('migration seeds one holding, seven operating subsidiaries and CMPDI',async
  await db.exec(`insert into auth.users values('40000000-0000-0000-0000-000000000000','member@example.com',now()),('50000000-0000-0000-0000-000000000000','cmpdi@example.com',now());
  select public.provision_member('20000000-0000-0000-0000-000000000000','40000000-0000-0000-0000-000000000000','Member',(select id from entities where code='BCCL'));
  select public.provision_member('20000000-0000-0000-0000-000000000000','50000000-0000-0000-0000-000000000000','Coordinator',(select id from entities where code='CMPDI'));
+ select public.set_review_position('20000000-0000-0000-0000-000000000000','40000000-0000-0000-0000-000000000000','assistant_manager');
  select public.finish_password_change('40000000-0000-0000-0000-000000000000');
  select public.finish_password_change('50000000-0000-0000-0000-000000000000');
  grant usage on schema auth to authenticated;
@@ -27,6 +30,7 @@ test('migration seeds one holding, seven operating subsidiaries and CMPDI',async
  set request.jwt.claim.sub='40000000-0000-0000-0000-000000000000';`);
  expect((await db.query('select code from entities')).rows).toEqual([{code:'BCCL'}]);
  expect((await db.query('select id from profiles')).rows).toHaveLength(1);
+ expect((await db.query("select review_position from profiles where id='40000000-0000-0000-0000-000000000000'")).rows).toEqual([{review_position:'assistant_manager'}]);
  await expect(db.exec("update profiles set role='cil_admin'")).rejects.toThrow();
  await expect(db.exec("select public.bootstrap_admin('40000000-0000-0000-0000-000000000000','Attack')")).rejects.toThrow();
  await db.exec("set request.jwt.claim.sub='50000000-0000-0000-0000-000000000000'");

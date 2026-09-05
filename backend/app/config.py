@@ -36,6 +36,10 @@ class Settings(BaseSettings):
         origins = [x.strip() for x in self.cors_origins.split(',') if x.strip()]
         if '*' in origins:
             raise ValueError('Explicit CORS origins required')
+        # Local development is often opened through either loopback hostname.
+        # Permit both while retaining explicit origins for deployed environments.
+        for local in ('http://localhost:5173','http://127.0.0.1:5173'):
+            if local not in origins:origins.append(local)
         return origins
 
 @lru_cache

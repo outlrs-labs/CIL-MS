@@ -2,3 +2,7 @@
 @font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:500;font-display:swap;src:url('./ibm-plex-sans-latin-500-normal.woff2') format('woff2');}
 @font-face{font-family:'IBM Plex Sans';font-style:normal;font-weight:600;font-display:swap;src:url('./ibm-plex-sans-latin-600-normal.woff2') format('woff2');}
 html[data-cil-workbench] body,html[data-cil-workbench] button,html[data-cil-workbench] input,html[data-cil-workbench] select{font-family:'IBM Plex Sans',system-ui,sans-serif;}
+html[data-cil-workbench] .cil-chat-composer{border-radius:3px!important;box-shadow:none!important;padding:14px!important;border:1px solid #e0e0e0!important;}
+html[data-cil-workbench] .cil-chat-composer:focus-within{border-color:#0f62fe!important;outline:2px solid #0f62fe22!important;}
+html[data-cil-workbench] .cil-chat-composer textarea{font-family:'IBM Plex Sans',system-ui,sans-serif!important;font-size:14px!important;line-height:1.5!important;}
+html[data-cil-workbench] .cil-chat-send{width:40px!important;height:40px!important;border-radius:3px!important;}

@@ -26,6 +26,7 @@ from .repository import Repository, PRODUCTION, TECHNICAL, ENTITIES, OPERATING, 
 
 from . import submissions,ocr
 from . import vault
+from . import quick_report
 router=APIRouter()
 @lru_cache
 def repository():
@@ -75,6 +76,12 @@ class AnalysisInput(BaseModel):
  scope_entities:list[str]=Field(default_factory=lambda:list(OPERATING))
  target_entity:str='CMPDI'
  target_family:str='annual'
+class AuditDecision(BaseModel):
+ model_config=ConfigDict(extra='forbid')
+ decision:str=Field(pattern='^(approve|await|reject)$')
+ comment:str=Field(default='',max_length=1000)
+class QuickReportInput(AnalysisInput):
+ send_for_audit:bool=False
 
 jobs:set[asyncio.Task]=set()
 async def import_analysis(value,selection):
@@ -295,17 +302,66 @@ async def _save_report(request,p,a):
 
 @router.get('/api/cmpdi/reports')
 async def reports(p:Principal=Depends(analyst)):
- repo=repository();code=entity_scope(p);items=[]
+ repo=repository();code=entity_scope(p);items=[];audits={item['report_id']:item for item in repo.audits(code)}
  for r in repo.reports(None):
   relative=repo.report_path(r['id'],None).relative_to(repo.root)
-  if not code or relative.parts[0]==code:items.append({**r,'entity':relative.parts[0],'family':relative.parts[1]})
+  entity=relative.parts[0];audit_status=audits.get(r['id'],{}).get('status')
+  if p.profile['role']=='subsidiary':visible=entity==code
+  else:visible=audit_status=='submitted_to_cmpdi' or (r['owner']==p.id and (entity=='CMPDI' or audit_status in (None,'rejected')))
+  if visible:
+   public={key:value for key,value in r.items() if key!='owner'}
+   items.append({**public,'entity':entity,'family':relative.parts[1],'can_submit':r['owner']==p.id and entity in OPERATING and audit_status in (None,'rejected'),'audit_status':audit_status})
  return items
+@router.post('/api/cmpdi/reports/generate',status_code=201)
+async def generate_report(data:QuickReportInput,p:Principal=Depends(analyst)):
+ repo=repository();catalog=(await asyncio.to_thread(submissions.versioned_catalog,repo,entity_scope(p),True))['files'];items={e['id']:e for e in catalog}
+ code=entity_scope(p)
+ if code and (data.target_entity!=code or set(data.scope_entities)!={code}):raise HTTPException(403,'Select only your own subsidiary and report destination.')
+ families=TECHNICAL if data.target_entity=='CMPDI' else PRODUCTION
+ if data.target_entity not in ENTITIES or data.target_family not in families:raise HTTPException(422,'Choose a valid report destination.')
+ selected=[];seen=set()
+ for choice in data.inputs:
+  entry=items.get(choice.file_id)
+  if not entry or not entry['supported']:raise HTTPException(422,'A selected source is missing or unsupported. Refresh the data list.')
+  if entry['entity'] not in data.scope_entities:raise HTTPException(422,'A selected source is outside the requested scope.')
+  if entry['id'] in seen:raise HTTPException(422,'Select each source once.')
+  seen.add(entry['id']);selected.append(entry)
+ result=await asyncio.to_thread(quick_report.generate,repo,p.id,data.title,data.period,data.target_entity,data.target_family,selected)
+ result['can_submit']=data.target_entity in OPERATING
+ if data.send_for_audit:
+  result['audit_status']=(await asyncio.to_thread(repo.submit_audit,result['id'],p.id,data.target_entity))['status']
+ return result
 @router.get('/api/cmpdi/reports/{id}/{artifact}')
 async def artifact(id:UUID,artifact:str,p:Principal=Depends(analyst)):
- if artifact not in ('report.md','report.png','manifest.json','report.zip'):raise HTTPException(404,'Artifact not found.')
- repo=repository();folder=repo.report_path(str(id),None)
- if entity_scope(p) and folder.relative_to(repo.root).parts[0]!=entity_scope(p):raise HTTPException(404,'Report not found.')
+ if artifact not in ('report.md','report.png','report.pdf','manifest.json','report.zip'):raise HTTPException(404,'Artifact not found.')
+ repo=repository();folder=repo.report_path(str(id),None);entity=folder.relative_to(repo.root).parts[0];scope=entity_scope(p)
+ if scope and entity!=scope:raise HTTPException(404,'Report not found.')
+ if p.profile['role']=='cmpdi' and entity in OPERATING:
+  report=next((item for item in repo.reports(None) if item['id']==str(id)),None)
+  audit=next((item for item in repo.audits(None) if item['report_id']==str(id)),None);status=audit and audit['status']
+  if not (status=='submitted_to_cmpdi' or report and report['owner']==p.id and status in (None,'rejected')):raise HTTPException(404,'Report not found.')
+ if not (folder/artifact).is_file():raise HTTPException(404,'Artifact not found.')
  return FileResponse(folder/artifact,filename=artifact,headers={'Content-Disposition':f'attachment; filename="{artifact}"'})
+
+@router.post('/api/cmpdi/reports/{id}/audit',status_code=201)
+async def submit_report_audit(id:UUID,p:Principal=Depends(analyst)):
+ repo=repository();folder=repo.report_path(str(id),None);entity=folder.relative_to(repo.root).parts[0];scope=entity_scope(p)
+ if scope and entity!=scope:raise HTTPException(404,'Report not found.')
+ if entity not in OPERATING:raise HTTPException(422,'Choose an operating subsidiary as the report destination before sending it for audit.')
+ return await asyncio.to_thread(repo.submit_audit,str(id),p.id,entity)
+
+@router.get('/api/cmpdi/audits')
+async def audit_queue(p:Principal=Depends(analyst)):
+ if p.profile['role']=='cmpdi':return []
+ return await asyncio.to_thread(repository().audits,entity_scope(p))
+
+@router.post('/api/cmpdi/audits/{id}/decision')
+async def audit_decision(id:UUID,data:AuditDecision,p:Principal=Depends(analyst)):
+ if p.profile['role']!='subsidiary' or p.profile.get('review_position','contributor')!='manager':raise HTTPException(403,'Only the subsidiary manager can review audit requests.')
+ position='manager'
+ item=repository().audit(str(id));scope=entity_scope(p)
+ if not scope or item['entity']!=scope:raise HTTPException(404,'Audit item not found.')
+ return await asyncio.to_thread(repository().decide_audit,str(id),p.id,position,data.decision,data.comment)
 
 from .providers import ProviderInput,add_provider,all_providers,public_config,save as save_providers
 provider_lock=asyncio.Lock()
@@ -364,6 +420,21 @@ async def vault_file(path:str=Query(...,max_length=2000),p:Principal=Depends(mem
   return Response(json.dumps(data,ensure_ascii=False,indent=2),media_type='application/json',headers={'Content-Disposition':'attachment; filename="reporting_schedule.json"','X-Content-Type-Options':'nosniff'})
  if not target.is_file():raise HTTPException(404,'File not found.')
  return FileResponse(target,filename=target.name,media_type='application/octet-stream',headers={'X-Content-Type-Options':'nosniff'})
+
+@router.get('/api/analytics/vault/preview')
+async def vault_preview(path:str=Query(...,max_length=2000),p:Principal=Depends(member)):
+ repo=repository();target=vault.resolve(repo,path,entity_scope(p))
+ if not target.is_file() or target.suffix.lower()!='.csv':raise HTTPException(422,'Preview is available for CSV files.')
+ rows=[]
+ try:
+  with target.open('r',encoding='utf-8-sig',newline='',errors='replace') as source:
+   reader=csv.reader(source)
+   for index,row in enumerate(reader):
+    if index>=101:break
+    rows.append([str(cell)[:500] for cell in row[:50]])
+ except (OSError,csv.Error):raise HTTPException(422,'This CSV could not be previewed.') from None
+ return {'name':target.name,'rows':rows,'truncated':index>=100 if rows else False,'max_columns':50}
+
 
 @router.post('/api/analytics/submissions',status_code=201)
 async def upload_submission(request:Request,family:str,cadence:str,period:str,entity:str='',p:Principal=Depends(analyst)):

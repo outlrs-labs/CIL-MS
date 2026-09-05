@@ -95,3 +95,41 @@ def test_report_artifacts_and_library_preserve_provenance(repo,monkeypatch):
  assert (repo.root/'CMPDI/report'/saved['id']/'report.zip').read_bytes()==(folder/'report.zip').read_bytes()
  assert repo.reports(p.id)[0]['id']==saved['id']
  with pytest.raises(Exception):repo.report_path(saved['id'],'another-user')
+
+def test_direct_report_can_be_generated_and_sent_through_simple_audit(repo):
+ source=repo.root/'BCCL/production_offtake/data/shift.csv'
+ source.write_text('mine,production,offtake\nA,100,85\nB,120,105\n')
+ app.dependency_overrides[principal]=lambda:as_role('cmpdi')
+ with TestClient(app) as c:
+  files=c.get('/api/analytics/catalog?include_history=true').json()['files']
+  selected=next(item for item in files if item['name']=='shift.csv')
+  result=c.post('/api/analytics/reports/generate',json={
+   'title':'Production summary','period':'September 2026',
+   'scope_entities':['BCCL'],'target_entity':'BCCL','target_family':'production_offtake',
+   'inputs':[{'file_id':selected['id']}],'send_for_audit':True,
+  })
+  assert result.status_code==201
+  report=result.json()
+  assert report['audit_status']=='pending_review'
+  assert c.get('/api/analytics/audits').json()==[]
+  assert all(item['id']!=report['id'] for item in c.get('/api/analytics/reports').json())
+  assert c.get(f"/api/analytics/reports/{report['id']}/report.pdf").status_code==404
+  assistant=Principal('assistant','token',{'id':'assistant','role':'subsidiary','review_position':'assistant_manager','active':True,'must_change_password':False},{'id':'entity','code':'BCCL','kind':'operating','active':True})
+  app.dependency_overrides[principal]=lambda:assistant
+  queue=c.get('/api/analytics/audits').json()
+  assert [item['report_id'] for item in queue]==[report['id']]
+  forbidden=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'approve','comment':'Checked'})
+  assert forbidden.status_code==403
+  reviewer=Principal('reviewer','token',{'id':'reviewer','role':'subsidiary','review_position':'manager','active':True,'must_change_password':False},{'id':'entity','code':'BCCL','kind':'operating','active':True})
+  app.dependency_overrides[principal]=lambda:reviewer
+  pdf=c.get(f"/api/analytics/reports/{report['id']}/report.pdf")
+  assert pdf.status_code==200 and pdf.content.startswith(b'%PDF')
+  awaiting=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'await','comment':'Confirm units'})
+  assert awaiting.status_code==200 and awaiting.json()['status']=='awaiting'
+  approved=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'approve','comment':'Checked'})
+  assert approved.status_code==200 and approved.json()['status']=='submitted_to_cmpdi'
+  app.dependency_overrides[principal]=lambda:as_role('cmpdi')
+  submissions=c.get('/api/analytics/reports').json()
+  assert next(item for item in submissions if item['id']==report['id'])['audit_status']=='submitted_to_cmpdi'
+  assert c.get('/api/analytics/audits').json()==[]
+  assert c.get(f"/api/analytics/reports/{report['id']}/report.pdf").status_code==200

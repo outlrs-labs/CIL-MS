@@ -41,6 +41,18 @@ td{color:var(--text);}td,th{border-color:var(--line);font-size:12px;}th,td small
 .confirm-upload input{width:16px;height:16px;}.sidebar-utility button.active{background:var(--subtle)!important;color:var(--accent)!important;}
 .workbench-panel{scroll-margin-top:76px;}.app-shell[class] .reporting-workspace p,.reporting-flow li span,.reporting-entity-list span,.reporting-entity-list small{color:var(--muted);}.details dd{color:var(--text);}.details dt,.access-list,.branch p,.branch-footer{color:var(--muted);}.connector-line{background:var(--line);}
 @media(prefers-reduced-motion:reduce){.sidebar,button{transition:none;}.spin{animation:none;}}
+
+/* Desktop density target: match the preferred view while the browser remains at 100%.
+   Keep compact and touch layouts at their native scale for usability. */
+/* Match the chosen density while keeping viewport-sized surfaces full height. */
+:root{--app-scale:1;--app-viewport:100dvh;}
+html,body,#root{min-height:var(--app-viewport);background:var(--canvas);}
+@media(min-width:851px){:root{zoom:.825;--app-scale:.825;--app-viewport:calc(100dvh / .825);}}
+.app-shell,.main-shell{min-height:var(--app-viewport);}
+.workspace-page-heading{margin:0 0 24px;padding:0 0 18px;position:relative;}
+.workspace-page-heading h1{margin:0;font-size:var(--type-h1,26px);line-height:1.2;font-weight:600;}
+.workspace-page-heading:after{content:"";display:block;position:absolute;bottom:0;left:0;width:min(540px,65%);height:1px;background:linear-gradient(to right,var(--line),transparent);}
+.workspace-brand>span{width:32px;height:24px;flex-shrink:0;}
 .app-shell[class] .reporting-hero,.app-shell[class] .analytics-intro{background:var(--surface);border-color:var(--line);color:var(--text);}.app-shell[class] .reporting-workspace{--role-accent:var(--accent);}.app-shell[class] .reporting-hero h2{color:var(--text);}.app-shell[class] .reporting-hero>p,.reporting-cards p{color:var(--muted);}.app-shell[class] .responsibility-tags span,.app-shell[class] .reporting-flow li.current,.app-shell[class] .reporting-directory-note{background:var(--subtle);color:var(--accent);border-color:var(--line);}.app-shell[class] .report-cycle-filter button.selected{background:var(--accent-base);}.app-shell[class] .report-family-list article>svg,.entity-icon.navy,.entity-icon.blue,.entity-monogram{background:var(--subtle);color:var(--accent);}.app-shell[class] .planned-label{background:var(--surface-alt);color:var(--muted);}.reporting-flow li{border-color:var(--line);}.report-cycle-filter button{background:var(--surface);color:var(--muted);border-color:var(--line);}
 .error,.error-box{background:#fff1f1;color:#a2191f;border-color:#ffb3b8;}.notice{background:var(--subtle);color:var(--text);border-color:var(--line);}.toast{background:var(--surface);color:var(--text);border-color:var(--line);}.login,.login-panel,.loading-screen,.access-screen{background:var(--canvas);color:var(--text);}.login-story{background:var(--surface-alt);color:var(--text);}.story-body>p,.login-form>p,.login-help,.login-foot,.login-top{color:var(--muted);}.login-form h2{color:var(--text);}.story-apex,.story-branches>div{background:var(--surface);border-color:var(--line);color:var(--text);}.intro-icon{background:var(--subtle);color:var(--accent);border-color:var(--line);}.password-input button{color:var(--muted);}
 [data-theme=dark] .error,[data-theme=dark] .error-box{background:#3b1920;color:#ffb3b8;border-color:#72343e;}[data-theme=dark] .badge,[data-theme=dark] .subtle-pill{background:var(--surface-alt);color:var(--text);}[data-theme=dark] .profile-details dd,[data-theme=dark] .access-list,[data-theme=dark] .branch p,[data-theme=dark] .branch-footer{color:var(--muted);}

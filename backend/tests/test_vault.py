@@ -4,7 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 from app.main import app
 from app.auth import Principal,principal
-from app.integration import api,submissions
+from app.integration import api,submissions,vault
 from app.integration.repository import Repository
 
 @pytest.fixture
@@ -92,3 +92,11 @@ def test_unsafe_paths_and_links(client,path):
  assert c.get('/api/analytics/vault',params={'path':path}).status_code==404
  assert c.get('/api/analytics/vault/file',params={'path':path}).status_code==404
  assert not any(e['name'] in ('.secret','link.csv','linked') for e in c.get('/api/analytics/vault',params={'path':'BCCL/production_offtake/data'}).json()['entries'])
+
+def test_vault_is_read_only(client):
+ c,repo,_=client
+ source=repo.root/'BCCL/production_offtake/data/2026/September/production.csv'
+ original=source.read_bytes()
+ for route in ('folders','rename','move','delete','edit'):
+  assert c.post('/api/analytics/vault/'+route,json={}).status_code==404
+ assert source.read_bytes()==original

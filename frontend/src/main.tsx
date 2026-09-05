@@ -11,4 +11,5 @@ import './typography.css';
 import './vault.css';
 import './submission.css';
 import './analysis.css';
+import './audit.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
