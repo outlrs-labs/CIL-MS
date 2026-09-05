@@ -415,6 +415,24 @@ async def reporting_schedules(p:Principal=Depends(analyst)):
 async def vault_entries(path:str=Query('',max_length=2000),q:str=Query('',max_length=120),kind:str=Query('all',pattern='^(all|folders|tables|documents|images|archives)$'),days:int=Query(0,ge=0,le=366),sort:str=Query('name',pattern='^(name|name_desc|modified|modified_asc)$'),offset:int=Query(0,ge=0),entity:str=Query('',max_length=16),report:str=Query('',max_length=64),p:Principal=Depends(member)):
  return await asyncio.to_thread(vault.browse,repository(),path=path,scope=entity_scope(p),query=q.strip(),kind=kind,days=days,sort=sort,offset=offset,entity_filter=entity,report_filter=report)
 
+@router.get('/api/analytics/vault/structure')
+async def vault_structure(p:Principal=Depends(member)):
+ repo=repository();scope=entity_scope(p)
+ schedule=await asyncio.to_thread(submissions.schedules,repo,scope)
+ records=await asyncio.to_thread(submissions.history,repo,scope)
+ visible=[]
+ for record in records:
+  visible.append({key:record.get(key) for key in ('id','entity','family','cadence','period','version','previous_id','uploaded_at','data_prefix','pending_extraction')}|{'files':[{key:file.get(key) for key in ('name','bytes','status')} for file in record.get('files',[])]})
+ return {'entities':list(schedule['subsidiaries']),'families':schedule['subsidiaries'],'submissions':visible,'timezone':schedule['timezone']}
+
+@router.get('/api/analytics/vault/archive')
+async def vault_archive(id:UUID,p:Principal=Depends(member)):
+ repo=repository();record=next((item for item in submissions.history(repo,entity_scope(p)) if item['id']==str(id)),None)
+ if not record:raise HTTPException(404,'Version not found.')
+ path=repo.root/record['entity']/record['family']/'submissions'/str(id)/'source.zip'
+ if not path.is_file():raise HTTPException(404,'Version archive not found.')
+ return FileResponse(path,filename=f"{record['entity']}-{record['family']}-{record['period']}-v{record['version']}.zip")
+
 @router.get('/api/analytics/vault/file')
 async def vault_file(path:str=Query(...,max_length=2000),p:Principal=Depends(member)):
  repo=repository();target=vault.resolve(repo,path,entity_scope(p))

@@ -114,3 +114,16 @@ def test_generated_report_folders_show_title_category_and_version(client):
  assert report['description']=='BCCL · Financial report · v3'
  opened=c.get('/api/analytics/vault',params={'path':report['path']}).json()
  assert opened['breadcrumbs'][-1]=={'path':report['path'],'name':'September production summary'}
+
+def test_virtual_vault_structure_is_scoped_and_hides_private_submission_fields(client):
+ c,_,login=client
+ scoped=c.get('/api/analytics/vault/structure')
+ assert scoped.status_code==200
+ payload=scoped.json()
+ assert payload['entities']==['BCCL']
+ assert set(payload['families'])=={'BCCL'}
+ assert payload['submissions']==[]
+ login('CIL','cil_admin')
+ admin=c.get('/api/analytics/vault/structure')
+ assert admin.status_code==200
+ assert set(admin.json()['entities'])=={'ECL','BCCL','CCL','NCL','WCL','SECL','MCL'}

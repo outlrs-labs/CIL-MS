@@ -1,49 +1,47 @@
-import {fireEvent,render,screen,waitFor} from '@testing-library/react';
+import {fireEvent,render,screen} from '@testing-library/react';
 import {afterEach,vi} from 'vitest';
 import {VaultWorkspace} from './VaultWorkspace';
 
-const listing={path:'',entries:[{name:'ECL',path:'ECL',kind:'folder',bytes:null,modified:1}],total:1,next_offset:null,recursive:false,truncated:false,filter_options:{entities:['ECL','BCCL','CMPDI'],reports:{ECL:[{id:'production_offtake',name:'Production and off-take report'}],BCCL:[{id:'financial',name:'Financial report'}],CMPDI:[{id:'annual',name:'Annual report'}]}}};
+const structure={
+ entities:['ECL','BCCL'],timezone:'Asia/Kolkata',
+ families:{
+  ECL:{production_offtake:{name:'Production and off-take report',cycles:{daily:{current_period:'2026-09-05',status:'submitted',latest_version:2,last_update:'2026-09-05T10:30:00+05:30'},monthly:{current_period:'2026-09',status:'awaiting_submission',latest_version:null,last_update:null}}},financial:{name:'Financial report',cycles:{quarterly:{current_period:'2026-Q3',status:'awaiting_submission',latest_version:null,last_update:null}}}},
+  BCCL:{production_offtake:{name:'Production and off-take report',cycles:{daily:{current_period:'2026-09-05',status:'awaiting_submission',latest_version:null,last_update:null}}}},
+ },
+ submissions:[
+  {id:'version-2-hash',entity:'ECL',family:'production_offtake',cadence:'daily',period:'2026-09-05',version:2,previous_id:'version-1-hash',uploaded_at:'2026-09-05T10:30:00+05:30',data_prefix:'ECL/production_offtake/data/versions/daily/2026-09-05/version-2-hash',pending_extraction:0,files:[{name:'production.csv',bytes:2048,status:'ready_for_analysis'}]},
+  {id:'version-1-hash',entity:'ECL',family:'production_offtake',cadence:'daily',period:'2026-09-05',version:1,previous_id:null,uploaded_at:'2026-09-05T09:00:00+05:30',data_prefix:'ECL/production_offtake/data/versions/daily/2026-09-05/version-1-hash',pending_extraction:0,files:[{name:'production.csv',bytes:1800,status:'ready_for_analysis'}]},
+ ],
+};
 
-function mockVault(response:unknown=listing){
- const fetchMock=vi.fn().mockResolvedValue({ok:true,json:async()=>response});
- vi.stubGlobal('fetch',fetchMock);
- return fetchMock;
-}
-
+function mockVault(value:unknown=structure){const fetchMock=vi.fn().mockResolvedValue({ok:true,json:async()=>value});vi.stubGlobal('fetch',fetchMock);return fetchMock}
 afterEach(()=>vi.unstubAllGlobals());
 
-test('administrator filters in subsidiary then report order',async()=>{
- const fetchMock=mockVault();
- render(<VaultWorkspace token="token" entityCode="CIL" canFilterSubsidiary/>);
- await screen.findByText('ECL');
- fireEvent.click(screen.getByRole('button',{name:/Filter/}));
- expect(screen.getByRole('combobox',{name:'Subsidiary'})).toBeInTheDocument();
- expect(screen.getByRole('combobox',{name:'Report'})).toBeDisabled();
- fireEvent.change(screen.getByRole('combobox',{name:'Subsidiary'}),{target:{value:'ECL'}});
- await waitFor(()=>expect(fetchMock.mock.calls.some(([url])=>String(url).includes('entity=ECL'))).toBe(true));
- expect(screen.getByRole('combobox',{name:'Report'})).not.toBeDisabled();
- fireEvent.change(screen.getByRole('combobox',{name:'Report'}),{target:{value:'production_offtake'}});
- await waitFor(()=>expect(fetchMock.mock.calls.some(([url])=>String(url).includes('entity=ECL')&&String(url).includes('report=production_offtake'))).toBe(true));
- expect(screen.getByRole('combobox',{name:'Sort by'})).toHaveTextContent('Newest first');
- expect(screen.getByRole('option',{name:'Oldest first'})).toBeInTheDocument();
+test('administrator drills from subsidiary to report category without storage folders',async()=>{
+ mockVault();render(<VaultWorkspace token="token" entityCode="CIL" canFilterSubsidiary/>);
+ fireEvent.click(await screen.findByRole('button',{name:/ECL 2 report categories/}));
+ expect(screen.getByRole('heading',{name:'ECL reports'})).toBeInTheDocument();
+ expect(screen.queryByText('data')).not.toBeInTheDocument();
+ expect(screen.queryByText('report_generated')).not.toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:/Production and off-take report/}));
+ expect(screen.getByText('5 September 2026')).toBeInTheDocument();
+ expect(screen.getByText('Current · v2')).toBeInTheDocument();
+ expect(screen.queryByText('version-2-hash')).not.toBeInTheDocument();
 });
 
-test('subsidiary sees only report filters for its own scoped vault',async()=>{
- mockVault();
- render(<VaultWorkspace token="token" entityCode="ECL" canFilterSubsidiary={false}/>);
- await screen.findByText('ECL');
- fireEvent.click(screen.getByRole('button',{name:/Filter/}));
- expect(screen.queryByRole('combobox',{name:'Subsidiary'})).not.toBeInTheDocument();
- expect(screen.getByRole('combobox',{name:'Report'})).not.toBeDisabled();
- expect(screen.getByRole('option',{name:'Production and off-take report'})).toBeInTheDocument();
+test('subsidiary lands directly in its own report directory',async()=>{
+ mockVault();render(<VaultWorkspace token="token" entityCode="ECL" canFilterSubsidiary={false}/>);
+ expect(await screen.findByRole('heading',{name:'ECL reports'})).toBeInTheDocument();
+ expect(screen.getByRole('button',{name:/Financial report/})).toBeInTheDocument();
+ expect(screen.queryByRole('button',{name:/BCCL/})).not.toBeInTheDocument();
 });
 
-test('an older folder response cannot crash the Vault page',async()=>{
- const {filter_options:_,...legacyListing}=listing;
- mockVault(legacyListing);
- render(<VaultWorkspace token="token" entityCode="CIL" canFilterSubsidiary/>);
- expect(await screen.findByText('ECL')).toBeInTheDocument();
- fireEvent.click(screen.getByRole('button',{name:/Filter/}));
- expect(screen.getByRole('combobox',{name:'Subsidiary'})).toBeInTheDocument();
- expect(screen.getByRole('combobox',{name:'Report'})).toBeDisabled();
+test('version control expands files and filters by reporting cycle',async()=>{
+ mockVault();render(<VaultWorkspace token="token" entityCode="ECL" canFilterSubsidiary={false}/>);
+ fireEvent.click(await screen.findByRole('button',{name:/Production and off-take report/}));
+ expect(screen.getAllByText(/Version [12]/)).toHaveLength(2);
+ fireEvent.click(screen.getByRole('button',{name:/Version 2/}));
+ expect(screen.getByText('production.csv')).toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:'Monthly'}));
+ expect(screen.getByText('No matching versions')).toBeInTheDocument();
 });
