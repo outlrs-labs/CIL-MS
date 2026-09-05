@@ -100,3 +100,17 @@ def test_vault_is_read_only(client):
  for route in ('folders','rename','move','delete','edit'):
   assert c.post('/api/analytics/vault/'+route,json={}).status_code==404
  assert source.read_bytes()==original
+
+def test_generated_report_folders_show_title_category_and_version(client):
+ c,repo,_=client
+ report_id='f64f20b5-d223-4fa6-b50e-52446cc57b11'
+ folder=repo.root/'BCCL/production_offtake/report_generated'/report_id
+ folder.mkdir(parents=True);(folder/'report.pdf').write_bytes(b'%PDF-1.4')
+ repo.register_report('vault-user',report_id,folder,'September production summary',{'series':'monthly-production','version':3,'previous_id':None})
+ repo.submit_audit(report_id,'vault-user','BCCL','financial')
+ listing=c.get('/api/analytics/vault',params={'path':'BCCL/production_offtake/report_generated'}).json()
+ report=next(entry for entry in listing['entries'] if entry['name']==report_id)
+ assert report['display_name']=='September production summary'
+ assert report['description']=='BCCL · Financial report · v3'
+ opened=c.get('/api/analytics/vault',params={'path':report['path']}).json()
+ assert opened['breadcrumbs'][-1]=={'path':report['path'],'name':'September production summary'}

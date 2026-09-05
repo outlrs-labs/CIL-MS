@@ -1,7 +1,8 @@
 import {useEffect,useState} from 'react';
 import {Check,Clock3,Download,FileCheck2,RefreshCw,X,XCircle} from 'lucide-react';
 
-type Audit={report_id:string;title:string;created:number;entity:string;status:string;comment:string;updated:number};
+type Audit={report_id:string;title:string;created:number;entity:string;category:string;version:number;previous_id:string|null;status:string;comment:string;updated:number};
+const categoryLabel:Record<string,string>={production_offtake:'Production and off-take report',financial:'Financial report',washery_operations:'Washery operational report',environmental_compliance:'Environmental clearance and compliance report',operational_statistics:'Operational statistic report'};
 const statusLabel:Record<string,string>={
  pending_review:'Awaiting review',awaiting:'Awaiting information',rejected:'Rejected',
  submitted_to_cmpdi:'Submitted to CMPDI',assistant_manager_pending:'Awaiting review',
@@ -59,12 +60,12 @@ export function AuditWorkspace({token,position='contributor',onChange}:{token:st
   <div className={'audit-simple-layout '+(selected?'has-selection':'')}>
    <nav className="audit-request-list" aria-label="Audit requests">
     {items.map(item=><button key={item.report_id} className={selected?.report_id===item.report_id?'selected':''} onClick={()=>setSelected(item)}>
-     <FileCheck2 size={20}/><span><strong>{item.title}</strong><small>{item.entity} · {new Date(item.created*1000).toLocaleDateString('en-IN')}</small></span><em data-status={item.status}>{statusLabel[item.status]||item.status.replaceAll('_',' ')}</em>
+     <FileCheck2 size={20}/><span><strong>{item.title}</strong><small>{item.entity} / {categoryLabel[item.category]||item.category.replaceAll('_',' ')} / v{item.version||1}</small><small>{new Date(item.created*1000).toLocaleDateString('en-IN')}</small></span><em data-status={item.status}>{statusLabel[item.status]||item.status.replaceAll('_',' ')}</em>
     </button>)}
     {!items.length&&<div className="audit-empty"><FileCheck2 size={30}/><strong>No audit requests</strong><span>Generate a report in Analyse, then send it for audit.</span></div>}
    </nav>
    {selected&&<article className="audit-request-preview">
-    <header><div><h2>{selected.title}</h2><p>{selected.entity} · {statusLabel[selected.status]||selected.status}</p></div><button className="icon-button" aria-label="Close report" onClick={()=>setSelected(null)}><X size={18}/></button></header>
+    <header><div><h2>{selected.title}</h2><p>{selected.entity} / {categoryLabel[selected.category]||selected.category.replaceAll('_',' ')} / v{selected.version||1} · {statusLabel[selected.status]||selected.status}</p></div><button className="icon-button" aria-label="Close report" onClick={()=>setSelected(null)}><X size={18}/></button></header>
     <div className="audit-preview-body">{loading?<p role="status">Opening report…</p>:reportImage?<img src={reportImage} alt="Generated report preview"/>:<pre>{reportText}</pre>}</div>
     <footer>
      {error&&<p className="error" role="alert">{error}</p>}

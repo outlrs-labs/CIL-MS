@@ -106,11 +106,15 @@ def test_direct_report_can_be_generated_and_sent_through_simple_audit(repo):
   result=c.post('/api/analytics/reports/generate',json={
    'title':'Production summary','period':'September 2026',
    'scope_entities':['BCCL'],'target_entity':'BCCL','target_family':'production_offtake',
-   'inputs':[{'file_id':selected['id']}],'send_for_audit':True,
+   'inputs':[{'file_id':selected['id']}],'send_for_audit':False,
   })
   assert result.status_code==201
   report=result.json()
-  assert report['audit_status']=='pending_review'
+  assert report['audit_status'] is None
+  invalid=c.post(f"/api/analytics/reports/{report['id']}/audit",json={'category':'annual'})
+  assert invalid.status_code==422
+  submitted=c.post(f"/api/analytics/reports/{report['id']}/audit",json={'category':'financial'})
+  assert submitted.status_code==201 and submitted.json()['status']=='pending_review'
   assert c.get('/api/analytics/audits').json()==[]
   assert all(item['id']!=report['id'] for item in c.get('/api/analytics/reports').json())
   assert c.get(f"/api/analytics/reports/{report['id']}/report.pdf").status_code==404
@@ -118,6 +122,7 @@ def test_direct_report_can_be_generated_and_sent_through_simple_audit(repo):
   app.dependency_overrides[principal]=lambda:assistant
   queue=c.get('/api/analytics/audits').json()
   assert [item['report_id'] for item in queue]==[report['id']]
+  assert queue[0]['category']=='financial' and queue[0]['version']==1
   forbidden=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'approve','comment':'Checked'})
   assert forbidden.status_code==403
   reviewer=Principal('reviewer','token',{'id':'reviewer','role':'subsidiary','review_position':'manager','active':True,'must_change_password':False},{'id':'entity','code':'BCCL','kind':'operating','active':True})
@@ -130,6 +135,7 @@ def test_direct_report_can_be_generated_and_sent_through_simple_audit(repo):
   assert approved.status_code==200 and approved.json()['status']=='submitted_to_cmpdi'
   app.dependency_overrides[principal]=lambda:as_role('cmpdi')
   submissions=c.get('/api/analytics/reports').json()
-  assert next(item for item in submissions if item['id']==report['id'])['audit_status']=='submitted_to_cmpdi'
+  final=next(item for item in submissions if item['id']==report['id'])
+  assert final['audit_status']=='submitted_to_cmpdi' and final['family']=='financial'
   assert c.get('/api/analytics/audits').json()==[]
   assert c.get(f"/api/analytics/reports/{report['id']}/report.pdf").status_code==200

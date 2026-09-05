@@ -80,6 +80,9 @@ class AuditDecision(BaseModel):
  model_config=ConfigDict(extra='forbid')
  decision:str=Field(pattern='^(approve|await|reject)$')
  comment:str=Field(default='',max_length=1000)
+class AuditSubmission(BaseModel):
+ model_config=ConfigDict(extra='forbid')
+ category:str=Field(pattern='^(production_offtake|environmental_compliance|financial|operational_statistics|washery_operations)$')
 class QuickReportInput(AnalysisInput):
  send_for_audit:bool=False
 
@@ -305,12 +308,12 @@ async def reports(p:Principal=Depends(analyst)):
  repo=repository();code=entity_scope(p);items=[];audits={item['report_id']:item for item in repo.audits(code)}
  for r in repo.reports(None):
   relative=repo.report_path(r['id'],None).relative_to(repo.root)
-  entity=relative.parts[0];audit_status=audits.get(r['id'],{}).get('status')
+  entity=relative.parts[0];audit_item=audits.get(r['id'],{});audit_status=audit_item.get('status');report_family=audit_item.get('category') or relative.parts[1]
   if p.profile['role']=='subsidiary':visible=entity==code
   else:visible=audit_status=='submitted_to_cmpdi' or (r['owner']==p.id and (entity=='CMPDI' or audit_status in (None,'rejected')))
   if visible:
    public={key:value for key,value in r.items() if key!='owner'}
-   items.append({**public,'entity':entity,'family':relative.parts[1],'can_submit':r['owner']==p.id and entity in OPERATING and audit_status in (None,'rejected'),'audit_status':audit_status})
+   items.append({**public,'entity':entity,'family':report_family,'can_submit':r['owner']==p.id and entity in OPERATING and audit_status in (None,'rejected'),'audit_status':audit_status})
  return items
 @router.post('/api/cmpdi/reports/generate',status_code=201)
 async def generate_report(data:QuickReportInput,p:Principal=Depends(analyst)):
@@ -329,7 +332,7 @@ async def generate_report(data:QuickReportInput,p:Principal=Depends(analyst)):
  result=await asyncio.to_thread(quick_report.generate,repo,p.id,data.title,data.period,data.target_entity,data.target_family,selected)
  result['can_submit']=data.target_entity in OPERATING
  if data.send_for_audit:
-  result['audit_status']=(await asyncio.to_thread(repo.submit_audit,result['id'],p.id,data.target_entity))['status']
+  result['audit_status']=(await asyncio.to_thread(repo.submit_audit,result['id'],p.id,data.target_entity,data.target_family))['status']
  return result
 @router.get('/api/cmpdi/reports/{id}/{artifact}')
 async def artifact(id:UUID,artifact:str,p:Principal=Depends(analyst)):
@@ -344,11 +347,11 @@ async def artifact(id:UUID,artifact:str,p:Principal=Depends(analyst)):
  return FileResponse(folder/artifact,filename=artifact,headers={'Content-Disposition':f'attachment; filename="{artifact}"'})
 
 @router.post('/api/cmpdi/reports/{id}/audit',status_code=201)
-async def submit_report_audit(id:UUID,p:Principal=Depends(analyst)):
+async def submit_report_audit(id:UUID,data:AuditSubmission,p:Principal=Depends(analyst)):
  repo=repository();folder=repo.report_path(str(id),None);entity=folder.relative_to(repo.root).parts[0];scope=entity_scope(p)
  if scope and entity!=scope:raise HTTPException(404,'Report not found.')
  if entity not in OPERATING:raise HTTPException(422,'Choose an operating subsidiary as the report destination before sending it for audit.')
- return await asyncio.to_thread(repo.submit_audit,str(id),p.id,entity)
+ return await asyncio.to_thread(repo.submit_audit,str(id),p.id,entity,data.category)
 
 @router.get('/api/cmpdi/audits')
 async def audit_queue(p:Principal=Depends(analyst)):

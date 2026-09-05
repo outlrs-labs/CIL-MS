@@ -9,6 +9,7 @@ from .repository import ENTITIES, PRODUCTION, TECHNICAL
 SCHEDULE='reporting_schedule.json'
 TYPES={'all':None,'folders':set(),'tables':{'.csv','.xlsx','.json','.parquet'},'documents':{'.pdf','.md','.txt'},'images':{'.png','.jpg','.jpeg','.tif','.tiff'},'archives':{'.zip'}}
 MAX_SCAN=25000
+FOLDER_NAMES={'data':'Source data','report_generated':'Generated reports','submissions':'Uploaded submissions','report':'Submitted reports','versions':'Versions'}
 
 def resolve(repo,path,scope=None):
     if not path:
@@ -42,6 +43,29 @@ def item(repo,path):
             'kind':'folder' if stat.S_ISDIR(info.st_mode) else 'file',
             'bytes':None if stat.S_ISDIR(info.st_mode) else info.st_size,'modified':info.st_mtime}
 
+def decorate(entry,report_labels):
+    """Add stable, human-readable labels while preserving immutable paths."""
+    parts=PurePosixPath(entry['path']).parts
+    report=report_labels.get(entry['name']) if entry['kind']=='folder' else None
+    if report:
+        family=(TECHNICAL if report['entity']=='CMPDI' else PRODUCTION).get(report['category'],{}).get('name',report['category'].replace('_',' ').title())
+        entry.update({'display_name':report['title'],'description':f"{report['entity']} · {family} · v{report['version']}"})
+    elif len(parts)==2 and parts[0] in ENTITIES and parts[1] in (TECHNICAL if parts[0]=='CMPDI' else PRODUCTION):
+        family=(TECHNICAL if parts[0]=='CMPDI' else PRODUCTION).get(parts[1])
+        entry['display_name']=family['name']
+    elif entry['kind']=='folder' and entry['name'] in FOLDER_NAMES:
+        entry['display_name']=FOLDER_NAMES[entry['name']]
+    return entry
+
+def breadcrumbs(repo,path,report_labels):
+    result=[];parts=PurePosixPath(path).parts if path else ()
+    for index in range(len(parts)):
+        relative=PurePosixPath(*parts[:index+1]).as_posix()
+        target=resolve(repo,relative)
+        entry=decorate(item(repo,target),report_labels)
+        result.append({'path':relative,'name':entry.get('display_name',entry['name'])})
+    return result
+
 def browse(repo,path='',scope=None,query='',kind='all',days=0,sort='name',offset=0,limit=200,entity_filter='',report_filter=''):
     base=resolve(repo,path,scope)
     if not base.is_dir():raise HTTPException(404,'Folder not found.')
@@ -54,7 +78,7 @@ def browse(repo,path='',scope=None,query='',kind='all',days=0,sort='name',offset
     allowed_reports=TECHNICAL if (scope or entity_filter)=='CMPDI' else PRODUCTION
     if report_filter and report_filter not in allowed_reports:raise HTTPException(422,'Choose a valid report family.')
     recursive=bool(query or kind!='all' or days or entity_filter or report_filter)
-    matches=[];count=0;truncated=False;cutoff=time.time()-days*86400 if days else 0
+    report_labels=repo.report_labels();matches=[];count=0;truncated=False;cutoff=time.time()-days*86400 if days else 0
     pending=[base]
     while pending:
         current=pending.pop()
@@ -81,7 +105,7 @@ def browse(repo,path='',scope=None,query='',kind='all',days=0,sort='name',offset
                     if relative==SCHEDULE and scope:
                         entry['bytes']=None;entry['modified']=None
                         if days:continue
-                    matches.append(entry)
+                    matches.append(decorate(entry,report_labels))
         except OSError:raise HTTPException(404,'Folder is unavailable.') from None
         if truncated or not recursive:break
     if sort=='modified':matches.sort(key=lambda e:(-(e['modified'] or 0),e['name'].casefold()))
@@ -89,7 +113,7 @@ def browse(repo,path='',scope=None,query='',kind='all',days=0,sort='name',offset
     elif sort=='name_desc':matches.sort(key=lambda e:(e['name'].casefold(),e['path']),reverse=True)
     else:matches.sort(key=lambda e:(e['name'].casefold(),e['path']))
     result=matches[offset:offset+limit]
-    return {'path':path,'entries':result,'total':len(matches),'recursive':recursive,'truncated':truncated,
+    return {'path':path,'breadcrumbs':breadcrumbs(repo,path,report_labels),'entries':result,'total':len(matches),'recursive':recursive,'truncated':truncated,
             'next_offset':offset+limit if offset+limit<len(matches) else None,
             'filter_options':{'entities':[scope] if scope else list(ENTITIES),'reports':{
                 entity:[{'id':key,'name':info['name']} for key,info in (TECHNICAL if entity=='CMPDI' else PRODUCTION).items()]

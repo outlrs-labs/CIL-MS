@@ -39,7 +39,14 @@ class Repository:
   with self.db() as db:
    db.execute('create table if not exists analyses(id text primary key, owner text not null, payload text not null)')
    db.execute('create table if not exists reports(id text primary key, owner text not null, path text not null, title text not null, created real not null)')
-   db.execute('create table if not exists audit_reviews(report_id text primary key,submitter text not null,entity text not null,status text not null,assistant_reviewer text,manager_reviewer text,comment text not null default "",updated real not null)')
+   db.execute('create table if not exists audit_reviews(report_id text primary key,submitter text not null,entity text not null,category text not null default "",status text not null,assistant_reviewer text,manager_reviewer text,comment text not null default "",updated real not null)')
+   columns={row[1] for row in db.execute('pragma table_info(audit_reviews)')}
+   if 'category' not in columns:db.execute('alter table audit_reviews add column category text not null default ""')
+   legacy=db.execute('select a.report_id,r.path from audit_reviews a join reports r on r.id=a.report_id where a.category=""').fetchall()
+   for report_id,path in legacy:
+    resolved=Path(path).resolve()
+    if resolved.is_relative_to(self.root) and len(resolved.relative_to(self.root).parts)>1:
+     db.execute('update audit_reviews set category=? where report_id=?',(resolved.relative_to(self.root).parts[1],report_id))
  def db(self):
   db=sqlite3.connect(self.processing/'catalog.sqlite3',timeout=30);db.execute('pragma journal_mode=WAL');return db
  def initialize(self):
@@ -105,14 +112,29 @@ class Repository:
     revision=db.execute('select series,version,previous_id from report_revisions where id=?',(item['id'],)).fetchone()
     item.update(dict(zip(('series','version','previous_id'),revision)) if revision else {'series':item['id'],'version':1,'previous_id':None})
   return items
+ def report_labels(self):
+  """Return presentation metadata without exposing repository paths to clients."""
+  from .submissions import initialize
+  initialize(self)
+  with self.db() as db:
+   rows=db.execute('select r.id,r.path,r.title,coalesce(a.entity,""),coalesce(a.category,""),coalesce(v.version,1) from reports r left join audit_reviews a on a.report_id=r.id left join report_revisions v on v.id=r.id').fetchall()
+  labels={}
+  for report_id,path,title,entity,category,version in rows:
+   resolved=Path(path).resolve()
+   if not resolved.is_relative_to(self.root):continue
+   relative=resolved.relative_to(self.root)
+   parts=relative.parts
+   labels[report_id]={'id':report_id,'path':relative.as_posix(),'title':title,'entity':entity or (parts[0] if parts else ''),'category':category or (parts[1] if len(parts)>1 else ''),'version':version or 1}
+  return labels
  def report_path(self,id,owner):
   with self.db() as db:row=db.execute('select path from reports where id=?'+(' and owner=?' if owner else ''),(id,owner) if owner else (id,)).fetchone()
   if not row:raise HTTPException(404,'Report not found.')
   path=Path(row[0]).resolve()
   if not path.is_relative_to(self.root):raise HTTPException(403,'Invalid report location.')
   return path
- def submit_audit(self,report_id,submitter,entity):
+ def submit_audit(self,report_id,submitter,entity,category):
   if entity not in OPERATING:raise HTTPException(422,'Choose an operating subsidiary as the report destination before sending it for audit.')
+  if category not in PRODUCTION:raise HTTPException(422,'Choose a valid subsidiary report category.')
   now=time.time()
   with self.db() as db:
    db.execute('begin immediate')
@@ -121,16 +143,22 @@ class Repository:
    if owner[0]!=submitter:raise HTTPException(403,'Only the report author can submit it for audit.')
    current=db.execute('select status from audit_reviews where report_id=?',(report_id,)).fetchone()
    if current and current[0] not in ('rejected','changes_requested'):raise HTTPException(409,'This report is already in audit.')
-   db.execute('insert into audit_reviews(report_id,submitter,entity,status,updated) values(?,?,?,?,?) on conflict(report_id) do update set status="pending_review",assistant_reviewer=null,manager_reviewer=null,comment="",updated=excluded.updated',(report_id,submitter,entity,'pending_review',now))
+   db.execute('insert into audit_reviews(report_id,submitter,entity,category,status,updated) values(?,?,?,?,?,?) on conflict(report_id) do update set category=excluded.category,status="pending_review",assistant_reviewer=null,manager_reviewer=null,comment="",updated=excluded.updated',(report_id,submitter,entity,category,'pending_review',now))
   return self.audit(report_id)
  def audit(self,report_id):
-  with self.db() as db:row=db.execute('select a.report_id,r.title,r.created,a.submitter,a.entity,a.status,a.assistant_reviewer,a.manager_reviewer,a.comment,a.updated from audit_reviews a join reports r on r.id=a.report_id where a.report_id=?',(report_id,)).fetchone()
+  from .submissions import initialize
+  initialize(self)
+  with self.db() as db:row=db.execute('select a.report_id,r.title,r.created,a.submitter,a.entity,a.category,a.status,a.assistant_reviewer,a.manager_reviewer,a.comment,a.updated,v.version,v.previous_id from audit_reviews a join reports r on r.id=a.report_id left join report_revisions v on v.id=r.id where a.report_id=?',(report_id,)).fetchone()
   if not row:raise HTTPException(404,'Audit item not found.')
-  return dict(zip(('report_id','title','created','submitter','entity','status','assistant_reviewer','manager_reviewer','comment','updated'),row))
+  item=dict(zip(('report_id','title','created','submitter','entity','category','status','assistant_reviewer','manager_reviewer','comment','updated','version','previous_id'),row));item['version']=item['version'] or 1;return item
  def audits(self,scope=None):
-  with self.db() as db:rows=db.execute('select a.report_id,r.title,r.created,a.submitter,a.entity,a.status,a.assistant_reviewer,a.manager_reviewer,a.comment,a.updated from audit_reviews a join reports r on r.id=a.report_id'+(' where a.entity=?' if scope else '')+' order by a.updated desc',(scope,) if scope else ()).fetchall()
-  keys=('report_id','title','created','submitter','entity','status','assistant_reviewer','manager_reviewer','comment','updated')
-  return [dict(zip(keys,row)) for row in rows]
+  from .submissions import initialize
+  initialize(self)
+  with self.db() as db:rows=db.execute('select a.report_id,r.title,r.created,a.submitter,a.entity,a.category,a.status,a.assistant_reviewer,a.manager_reviewer,a.comment,a.updated,v.version,v.previous_id from audit_reviews a join reports r on r.id=a.report_id left join report_revisions v on v.id=r.id'+(' where a.entity=?' if scope else '')+' order by a.category,a.updated desc',(scope,) if scope else ()).fetchall()
+  keys=('report_id','title','created','submitter','entity','category','status','assistant_reviewer','manager_reviewer','comment','updated','version','previous_id')
+  items=[dict(zip(keys,row)) for row in rows]
+  for item in items:item['version']=item['version'] or 1
+  return items
  def decide_audit(self,report_id,reviewer,position,decision,comment):
   if position!='manager':raise HTTPException(403,'Only the subsidiary manager can review audit requests.')
   item=self.audit(report_id)
