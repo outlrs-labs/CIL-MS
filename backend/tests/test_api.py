@@ -101,3 +101,24 @@ def test_successful_provision_uses_authenticated_actor_and_entity():
   assert call[2]['p_entity']==body['entity_id']
   assert 'An-example-secret-123!' not in result.text
  finally: app.dependency_overrides.clear()
+
+def test_provision_manager_assigns_requested_audit_position():
+ fake=FakeGateway();app.dependency_overrides[principal]=lambda:person();app.dependency_overrides[gateway]=lambda:fake
+ body={'email':'manager@example.com','full_name':'Subsidiary Manager','entity_id':'30000000-0000-0000-0000-000000000000','temporary_password':'An-example-secret-123!','review_position':'manager'}
+ try:
+  with TestClient(app) as client:
+   result=client.post('/api/admin/users',json=body)
+  assert result.status_code==201
+  position_call=next(c for c in fake.calls if c[0]=='rpc' and c[1]=='set_review_position')
+  assert position_call[2]=={'p_actor':PROFILE['id'],'p_user_id':'40000000-0000-0000-0000-000000000000','p_position':'manager'}
+ finally: app.dependency_overrides.clear()
+
+def test_admin_can_promote_contributor_to_manager():
+ fake=FakeGateway();app.dependency_overrides[principal]=lambda:person();app.dependency_overrides[gateway]=lambda:fake
+ user_id='40000000-0000-0000-0000-000000000000'
+ try:
+  with TestClient(app) as client:
+   result=client.patch(f'/api/admin/users/{user_id}/review-position',json={'review_position':'manager'})
+  assert result.status_code==200
+  assert fake.calls==[('rpc','set_review_position',{'p_actor':PROFILE['id'],'p_user_id':user_id,'p_position':'manager'})]
+ finally: app.dependency_overrides.clear()

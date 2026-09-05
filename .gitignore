@@ -6,6 +6,7 @@ dist/
 .venv/
 __pycache__/
 .pytest_cache/
+supabase/.temp/
 *.pyc
 *.tsbuildinfo
 .DS_Store
