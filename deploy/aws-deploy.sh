@@ -71,6 +71,11 @@ done
 aws secretsmanager put-secret-value --region "$AWS_REGION" --secret-id "$environment_secret" \
   --secret-string "file://$rendered_env" >/dev/null
 
+# Seed/update the durable object repository before the application starts.
+# S3 versioning preserves replaced objects, while hidden workstation files stay local.
+aws s3 sync --region "$AWS_REGION" "$PROJECT_ROOT/Data/cil/" "s3://${data_bucket}/cil/" \
+  --no-follow-symlinks --exclude '.*' --exclude '*/.*' --only-show-errors
+
 tar -C "$PROJECT_ROOT" -czf "$release_archive" \
   --exclude=.git --exclude=.env --exclude=.env.production --exclude=.venv \
   --exclude='*/node_modules' --exclude='*/dist' --exclude=Data --exclude='*/__pycache__' .
