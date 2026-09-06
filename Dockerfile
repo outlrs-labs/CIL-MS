@@ -1,9 +1,9 @@
 FROM node:22-bookworm-slim AS workbench-build
 WORKDIR /build/workbench
-COPY data-formulator-main/package.json data-formulator-main/package-lock.json ./
-RUN npm ci
-COPY data-formulator-main/ ./
-RUN npm run build
+COPY data-analyser/package.json ./
+RUN npm install --legacy-peer-deps --ignore-scripts
+COPY data-analyser/ ./
+RUN CIL_EMBEDDED=true npm run build
 
 FROM node:22-bookworm-slim AS frontend-build
 WORKDIR /build/frontend
@@ -22,13 +22,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/cil
 COPY backend/requirements.txt /tmp/backend-requirements.txt
-COPY data-formulator-main/requirements.txt /tmp/workbench-requirements.txt
-COPY data-formulator-main/pyproject.toml data-formulator-main/README.md /opt/cil/data-formulator-main/
-COPY data-formulator-main/py-src/ /opt/cil/data-formulator-main/py-src/
+COPY data-analyser/requirements.txt /tmp/workbench-requirements.txt
+COPY data-analyser/pyproject.toml data-analyser/README.md /opt/cil/data-analyser/
+COPY data-analyser/py-src/ /opt/cil/data-analyser/py-src/
 RUN python -m pip install --no-cache-dir -r /tmp/backend-requirements.txt \
-    && cd /opt/cil/data-formulator-main \
+    && cd /opt/cil/data-analyser \
     && python -m pip install --no-cache-dir -r /tmp/workbench-requirements.txt
-COPY --from=workbench-build /build/workbench/py-src/data_formulator/dist/ /opt/cil/data-formulator-main/py-src/data_formulator/dist/
+COPY --from=workbench-build /build/workbench/py-src/data_formulator/dist/ /opt/cil/data-analyser/py-src/data_formulator/dist/
 COPY backend/ /opt/cil/backend/
 COPY integration/ /opt/cil/integration/
 COPY scripts/ /opt/cil/scripts/

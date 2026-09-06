@@ -20,7 +20,7 @@ secret=os.environ.get('DF_BRIDGE_SECRET','')
 if len(secret)<32:raise SystemExit('Set DF_BRIDGE_SECRET (at least 32 random characters) in cil-platform/.env.')
 processing=Path(config.get('CIL_PROCESSING_ROOT') or PROJECT/'Data'/'.processing').resolve()
 os.environ.update(AUTH_PROVIDER='cil',ALLOW_ANONYMOUS='false',HOST='private',DATA_FORMULATOR_HOME=str(processing/'workspaces'),DISABLE_DATA_CONNECTORS='true',DISABLE_CUSTOM_MODELS='true',DISABLE_DISPLAY_KEYS='true',SANDBOX=config.get('DF_SANDBOX') or 'local')
-sys.path.insert(0,str(PROJECT/'data-formulator-main'/'py-src'))
+sys.path.insert(0,str(PROJECT/'data-analyser'/'py-src'))
 from flask import request,abort
 from data_formulator.auth.providers.base import AuthProvider,AuthResult,AuthenticationError
 from data_formulator.auth import providers

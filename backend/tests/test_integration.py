@@ -65,6 +65,17 @@ def test_direct_analysis_file_is_persisted_and_catalogued(repo):
   assert any(entry['id']==item['id'] for entry in files)
   assert c.post('/api/analytics/session-source?entity=BCCL&family=production_offtake&name=notes.exe',content=b'bad').status_code==422
 
+def test_direct_scanned_document_is_catalogued_for_ocr(repo):
+ app.dependency_overrides[principal]=lambda:as_role('cmpdi')
+ with TestClient(app) as c:
+  r=c.post('/api/analytics/session-source?entity=BCCL&family=production_offtake&name=scan.pdf',content=b'%PDF-1.4 demo',headers={'content-type':'application/pdf'})
+  assert r.status_code==201
+  item=r.json()
+  assert item['supported'] is False
+  assert item['extractable'] is True
+  assert item['format']=='pdf'
+  assert (repo.root/item['relative_path']).read_bytes()==b'%PDF-1.4 demo'
+
 def test_analysis_time_ocr_imports_markdown_and_csv_derivatives(repo,monkeypatch):
  from unittest.mock import AsyncMock
  folder=repo.root/'BCCL/production_offtake/extractions/job-1';folder.mkdir(parents=True)

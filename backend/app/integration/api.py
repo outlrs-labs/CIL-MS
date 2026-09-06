@@ -23,7 +23,7 @@ from fastapi.security import HTTPAuthorizationCredentials
 from pydantic import BaseModel, Field, ConfigDict
 from ..auth import Principal, member, principal, gateway
 from ..config import settings
-from .repository import Repository, PRODUCTION, TECHNICAL, ENTITIES, OPERATING, FORMATS, atomic_json
+from .repository import Repository, PRODUCTION, TECHNICAL, ENTITIES, OPERATING, FORMATS, OCR_FORMATS, atomic_json
 
 from . import submissions,ocr
 from . import vault
@@ -159,7 +159,7 @@ async def session_source(request:Request,entity:str=Query(max_length=16),family:
  filename=unquote(name).strip()
  if not filename or filename!=Path(filename).name or filename.startswith('.') or '/' in filename or '\\' in filename:raise HTTPException(422,'Invalid file name.')
  suffix=Path(filename).suffix.lower()
- if suffix not in FORMATS:raise HTTPException(422,'Use CSV, XLSX, JSON or Parquet for direct analysis.')
+ if suffix not in FORMATS|OCR_FORMATS:raise HTTPException(422,'Use CSV, XLSX, JSON, Parquet, PDF, PNG, JPEG or TIFF.')
  body=await bounded_body(request,256*1024**2)
  if not body:raise HTTPException(422,'Choose a non-empty file.')
  destination=repo.root/entity/family/'data'/'analysis_uploads'/str(uuid4())/filename
@@ -171,7 +171,7 @@ async def session_source(request:Request,entity:str=Query(max_length=16),family:
   shutil.rmtree(destination.parent,ignore_errors=True);raise
  relative=destination.relative_to(repo.root).as_posix();stat=destination.stat()
  fingerprint=f'{relative}:{stat.st_size}:{stat.st_mtime_ns}'
- return {'id':hashlib.sha256(fingerprint.encode()).hexdigest(),'entity':entity,'family':family,'name':filename,'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':True,'session_upload':True}
+ return {'id':hashlib.sha256(fingerprint.encode()).hexdigest(),'entity':entity,'family':family,'name':filename,'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':suffix in FORMATS,'extractable':suffix in OCR_FORMATS,'format':suffix.lstrip('.'),'session_upload':True}
 @router.get('/api/cmpdi/status')
 async def status(p:Principal=Depends(analyst)):
  try:
@@ -285,7 +285,7 @@ async def workbench(id:UUID,path:str,request:Request):
    finally:await result.aclose();await client.aclose()
   return StreamingResponse(stream(),status_code=result.status_code,media_type=result.headers.get('content-type','application/json'),headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
  # Static bundle and SPA. Assets contain no source data but still require the workbench session.
- dist=Path(__file__).resolve().parents[3]/'data-formulator-main'/'py-src'/'data_formulator'/'dist'
+ dist=Path(__file__).resolve().parents[3]/'data-analyser'/'py-src'/'data_formulator'/'dist'
  if not path or path in ('app','about'):
   index=dist/'index.html'
   if not index.exists():raise HTTPException(503,'Build the analytics frontend first.')

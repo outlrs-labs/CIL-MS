@@ -1,3 +1,4 @@
+import asyncio
 import httpx
 from fastapi import HTTPException
 from .config import Settings
@@ -16,10 +17,19 @@ class Gateway:
             headers['Authorization'] = f'Bearer {token}'
         elif service and key.startswith('eyJ'):
             headers['Authorization'] = f'Bearer {key}'
-        try:
-            response = await self.client.request(method, self.config.supabase_url + path, headers=headers, json=body, params=params)
-        except httpx.RequestError:
-            raise HTTPException(503, 'Identity service is unavailable. Please retry.') from None
+        # Authentication/profile reads are safe to retry. A laptop waking up or
+        # switching networks can leave the macOS DNS resolver unavailable for a
+        # fraction of a second; treating that first failure as a signed-out
+        # identity made the entire workspace disappear unnecessarily.
+        attempts = 3 if method.upper() in ('GET', 'HEAD') else 1
+        for attempt in range(attempts):
+            try:
+                response = await self.client.request(method, self.config.supabase_url + path, headers=headers, json=body, params=params)
+                break
+            except httpx.RequestError:
+                if attempt + 1 == attempts:
+                    raise HTTPException(503, 'Identity service is unavailable. Please retry.') from None
+                await asyncio.sleep(0.15 * (attempt + 1))
         if not response.is_success:
             if path == '/auth/v1/user' and method == 'GET':
                 raise HTTPException(401, 'Session expired or invalid. Sign in again.')

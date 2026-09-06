@@ -21,12 +21,12 @@ def newest(path: Path) -> float:
 
 
 def build_workbench() -> None:
-    source = ROOT / "data-formulator-main" / "src"
-    output = ROOT / "data-formulator-main" / "py-src" / "data_formulator" / "dist" / "index.html"
+    source = ROOT / "data-analyser" / "src"
+    output = ROOT / "data-analyser" / "py-src" / "data_formulator" / "dist" / "index.html"
     if output.is_file() and output.stat().st_mtime >= newest(source):
         return
     env = {**os.environ, "CIL_EMBEDDED": "true"}
-    subprocess.run(["npm", "run", "build"], cwd=ROOT / "data-formulator-main", env=env, check=True)
+    subprocess.run(["npm", "run", "build"], cwd=ROOT / "data-analyser", env=env, check=True)
 
 
 def start(name: str, command: list[str], cwd: Path = ROOT) -> subprocess.Popen:

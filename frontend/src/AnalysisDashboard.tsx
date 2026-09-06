@@ -1,4 +1,4 @@
-import {useMemo,useRef,useState} from 'react';
+import {useEffect,useMemo,useRef,useState} from 'react';
 import {ArrowRight,BarChart3,Check,ChevronRight,Database,FileImage,FileSpreadsheet,FileText,Folder,FolderOpen,History,Search,Upload,X} from 'lucide-react';
 
 export type AnalysisSource={version?:number;cadence?:string;period?:string;is_latest?:boolean;modified?:number;id:string;entity:string;family:string;name:string;relative_path:string;bytes:number;supported:boolean;extractable?:boolean;format?:string;extraction_id?:string};
@@ -7,11 +7,11 @@ export type AnalysisCatalog={files:AnalysisSource[];folders:AnalysisFolder[];ent
 export type SavedAnalysis={id:string;title:string;status:string;phase?:string;progress?:number;document_progress?:number;document_index?:number;document_total?:number;current_page?:number;page_count?:number;current_source?:string|null;error?:string;period:string;scope_entities:string[];missing_entities:string[];sources:AnalysisSource[];target_entity:string;target_family:string;tables:unknown[]};
 export type VersionSelection={family:string;version:number;cadence?:string;period?:string};
 
-type Props={catalog:AnalysisCatalog|null;technical:boolean;entityCode:string;selected:Record<string,string>;setSelected:(value:Record<string,string>)=>void;entities:string[];setEntities:(value:string[])=>void;family:string;setFamily:(value:string)=>void;title:string;setTitle:(value:string)=>void;period:string;setPeriod:(value:string)=>void;target:string;setTarget:(value:string)=>void;targetFamily:string;setTargetFamily:(value:string)=>void;busy:boolean;generating?:boolean;online?:boolean;modelReady?:boolean;analyses:SavedAnalysis[];onCreate:(version?:VersionSelection)=>void;onGenerate?: (version?:VersionSelection)=>void;onOpen:(analysis:SavedAnalysis)=>void;onRefresh:()=>Promise<void>;token:string;workbenchMode?:boolean};
+type Props={catalog:AnalysisCatalog|null;technical:boolean;entityCode:string;selected:Record<string,string>;setSelected:(value:Record<string,string>)=>void;entities:string[];setEntities:(value:string[])=>void;family:string;setFamily:(value:string)=>void;title:string;setTitle:(value:string)=>void;period:string;setPeriod:(value:string)=>void;target:string;setTarget:(value:string)=>void;targetFamily:string;setTargetFamily:(value:string)=>void;busy:boolean;generating?:boolean;online?:boolean;modelReady?:boolean;analyses:SavedAnalysis[];onCreate:(version?:VersionSelection)=>void;onGenerate?: (version?:VersionSelection)=>void;onOpen:(analysis:SavedAnalysis)=>void;onRefresh:()=>Promise<void>;token:string;workbenchMode?:boolean;openPickerSignal?:number};
 
 const size=(value:number)=>value>=1024**2?(value/1024**2).toFixed(1)+' MB':Math.max(1,Math.ceil(value/1024))+' KB';
 
-export function AnalysisDashboard({catalog,technical,entityCode,selected,setSelected,entities,setEntities,family,setFamily,title,setTitle,period,setPeriod,target,setTarget,targetFamily,setTargetFamily,busy,generating=false,online,modelReady,analyses,onCreate,onGenerate,onOpen,onRefresh,token,workbenchMode=false}:Props){
+export function AnalysisDashboard({catalog,technical,entityCode,selected,setSelected,entities,setEntities,family,setFamily,title,setTitle,period,setPeriod,target,setTarget,targetFamily,setTargetFamily,busy,generating=false,online,modelReady,analyses,onCreate,onGenerate,onOpen,onRefresh,token,workbenchMode=false,openPickerSignal=0}:Props){
  const [picker,setPicker]=useState(false),[query,setQuery]=useState(''),[uploading,setUploading]=useState(false),[uploadError,setUploadError]=useState('');
  const [activeEntity,setActiveEntity]=useState(technical?'all':entityCode),[activeFamily,setActiveFamily]=useState(family);
  const [versionFamily,setVersionFamily]=useState(''),[versionKey,setVersionKey]=useState('');
@@ -59,6 +59,8 @@ export function AnalysisDashboard({catalog,technical,entityCode,selected,setSele
 	  }
 	 }
  function showPicker(){setPicker(true);queueMicrotask(()=>dialog.current?.showModal());}
+ const handledPickerSignal=useRef(openPickerSignal);
+ useEffect(()=>{if(openPickerSignal!==handledPickerSignal.current){handledPickerSignal.current=openPickerSignal;showPicker();}},[openPickerSignal]);
  function closePicker(){dialog.current?.close();setPicker(false);}
  function selectLocation(entity:string,nextFamily='all'){
   setActiveEntity(entity);setActiveFamily(nextFamily);setFamily(nextFamily);
@@ -131,7 +133,7 @@ export function AnalysisDashboard({catalog,technical,entityCode,selected,setSele
      </div>)}
     </nav>
     <section className="source-results" aria-label="Data files">
-     <div className="source-results-heading"><div><span className="source-breadcrumb">{normalizedQuery?(catalog?.root_label||'Data/cil')+' / Search':activeEntity==='all'?'Repository':activeEntity+(activeFamily==='all'?'':' / '+(activeFolder?.name||activeFamily))}</span><h3>{resultTitle}</h3></div><label className={'button secondary device-upload '+(!canUpload?'disabled':'')} title={canUpload?'Add files to '+activeFolder?.name:'Choose an entity and report family to add files'} aria-disabled={!canUpload}><Upload size={16}/>{uploading?'Storing…':'Add files'}<input type="file" multiple accept=".csv,.xlsx,.json,.parquet" disabled={uploading||!canUpload} onChange={event=>void uploadFiles(event.target.files)}/></label></div>
+     <div className="source-results-heading"><div><span className="source-breadcrumb">{normalizedQuery?(catalog?.root_label||'Data/cil')+' / Search':activeEntity==='all'?'Repository':activeEntity+(activeFamily==='all'?'':' / '+(activeFolder?.name||activeFamily))}</span><h3>{resultTitle}</h3></div><label className={'button secondary device-upload '+(!canUpload?'disabled':'')} title={canUpload?'Add data or scanned documents to '+activeFolder?.name:'Choose an entity and report family to add files'} aria-disabled={!canUpload}><Upload size={16}/>{uploading?'Storing…':'Upload / OCR'}<input type="file" multiple accept=".csv,.xlsx,.json,.parquet,.pdf,.png,.jpg,.jpeg,.tif,.tiff" disabled={uploading||!canUpload} onChange={event=>void uploadFiles(event.target.files)}/></label></div>
      <div className="source-file-list">{visible.map(file=>{
       const checked=file.id in selected,folderName=folderNames.get(file.entity+'/'+file.family)||file.family;
       return <label key={file.id} className={'source-file-row '+(checked?'selected':'')}><input type="checkbox" checked={checked} onChange={()=>{const next={...selected};if(checked)delete next[file.id];else next[file.id]='';updateSelection(next);}}/><span className="source-file-icon">{file.extractable?(file.format==='pdf'?<FileText size={20}/>:<FileImage size={20}/>):<FileSpreadsheet size={20}/>}</span><span className="source-file-copy"><strong>{file.name}</strong><small>{file.entity} / {folderName}{file.period?' / '+file.period:''}</small></span><span className="source-file-meta">{file.version&&<small>v{file.version}{file.is_latest?' · Current':''}</small>}<small>{file.extractable?'OCR on open':file.cadence?file.cadence+' · '+size(file.bytes):size(file.bytes)}</small></span>{checked&&<Check className="source-check" size={16}/>}</label>;

@@ -94,14 +94,14 @@ For a fresh dependency installation, install backend requirements and the bundle
 ```sh
 .venv/bin/python -m pip install -r backend/requirements.txt
 .venv/bin/python -m pip install setuptools wheel
-.venv/bin/python -m pip install --no-build-isolation -e data-formulator-main
-npm --prefix data-formulator-main install --legacy-peer-deps --ignore-scripts
-CIL_EMBEDDED=true npm --prefix data-formulator-main run build
+.venv/bin/python -m pip install --no-build-isolation -e data-analyser
+npm --prefix data-analyser install --legacy-peer-deps --ignore-scripts
+CIL_EMBEDDED=true npm --prefix data-analyser run build
 npm --prefix frontend install
 npm --prefix frontend run build
 ```
 
-`--legacy-peer-deps` accommodates the upstream Vega peer-version mismatch. The source, backend package, and compiled workbench now resolve from `data-formulator-main/` inside this project.
+`--legacy-peer-deps` accommodates the upstream Vega peer-version mismatch. The source, backend package, and compiled workbench now resolve from `data-analyser/` inside this project.
 
 Set `DF_BRIDGE_SECRET` to a random secret of at least 32 characters, and retain the loopback `DF_URL=http://127.0.0.1:5567`. Keep `.env` private. `CIL_DATA_ROOT`/`CIL_PROCESSING_ROOT` can override storage locations. `WORKBENCH_COOKIE_SECURE=true` is required when deployed over HTTPS; proxy both `/api/cmpdi` and `/cmpdi/workbench` on the frontend origin. This local pilot uses `DF_SANDBOX=local`; harden execution before deployment.
 

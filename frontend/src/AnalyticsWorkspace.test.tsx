@@ -65,6 +65,11 @@ test('creates the workbench session after data is selected',async()=>{
  await waitFor(()=>expect(screen.getByTitle('CIL analytics workbench')).toHaveAttribute('src','/cmpdi/workbench/analysis-2/'));
  const workbench=screen.getByTitle('CIL analytics workbench') as HTMLIFrameElement;
  await act(async()=>{
+  window.dispatchEvent(new MessageEvent('message',{origin:window.location.origin,source:workbench.contentWindow,data:{type:'cil-open-data'}}));
+ });
+ expect(await screen.findByRole('dialog',{name:'Choose data source'})).toBeInTheDocument();
+ fireEvent.click(screen.getByRole('button',{name:'Close data selector'}));
+ await act(async()=>{
   window.dispatchEvent(new MessageEvent('message',{origin:window.location.origin,source:workbench.contentWindow,data:{type:'cil-generate-report'}}));
  });
  await waitFor(()=>expect(screen.getByText('Report ready')).toBeInTheDocument());

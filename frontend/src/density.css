@@ -1,0 +1,27 @@
+/* Native 90% desktop density. Do not use CSS zoom here: the analysis iframe
+   contains pointer-driven drag/drop and popover controls. */
+:root{
+  --type-caption:11.3px;
+  --type-small:12.8px;
+  --type-body:14.4px;
+  --type-section:18.3px;
+  --type-title:23.3px;
+  --type-display:37.7px;
+  --space-xs:7px;
+  --space-sm:12px;
+  --space-md:19px;
+  --space-lg:31px;
+  --space-xl:50px;
+}
+@media(min-width:851px){
+  .app-shell[class] .reference-sidebar{width:216px;padding-inline:11px;}
+  .reference-sidebar>.workspace-brand{height:50px;margin-inline:-11px;padding-inline:14px;}
+  .app-shell[class] .reference-sidebar nav{padding-top:14px;}
+  .app-shell[class] .reference-sidebar nav button,.sidebar-utility button{gap:11px;padding:10px 11px;}
+  .sidebar-utility{margin-top:25px;padding-top:14px;}
+  .main-shell{margin-left:216px;width:calc(100% - 216px);}
+  .app-shell[class] .reference-topbar{height:50px;padding-inline:22px;}
+  .app-shell[class] .workspace-main{padding:19px 23px 18px;}
+  .button{min-height:32px;padding:7px 11px;}
+  input,textarea,select{min-height:32px;padding:7px 9px;}
+}

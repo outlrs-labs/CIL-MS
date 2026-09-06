@@ -12,4 +12,5 @@ import './vault.css';
 import './submission.css';
 import './analysis.css';
 import './audit.css';
+import './density.css';
 ReactDOM.createRoot(document.getElementById('root')!).render(<React.StrictMode><App/></React.StrictMode>);
