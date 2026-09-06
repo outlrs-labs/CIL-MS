@@ -31,6 +31,7 @@ RUN python -m pip install --no-cache-dir -r /tmp/backend-requirements.txt \
 COPY --from=workbench-build /build/workbench/py-src/data_formulator/dist/ /opt/cil/data-formulator-main/py-src/data_formulator/dist/
 COPY backend/ /opt/cil/backend/
 COPY integration/ /opt/cil/integration/
+COPY scripts/ /opt/cil/scripts/
 COPY report_templates/ /opt/cil/report_templates/
 RUN mkdir -p /srv/cil-data/cil /srv/cil-processing
 EXPOSE 8000 5567

@@ -35,10 +35,12 @@ distribution_id="$(output DistributionId)"
 distribution_domain="$(output DistributionDomain)"
 environment_secret="$(output ProductionEnvironmentSecret)"
 release_key="deploy/releases/$(date -u +%Y%m%dT%H%M%SZ)-${RANDOM}.tar.gz"
+catalog_key="${release_key%.tar.gz}-catalog.sqlite3"
 
 rendered_env="$(mktemp)"
-release_archive="$(mktemp -u).tar.gz"
-cleanup() { rm -f "$rendered_env" "$release_archive"; }
+release_archive="$(mktemp)"
+catalog_snapshot=""
+cleanup() { rm -f "$rendered_env" "$release_archive" ${catalog_snapshot:+"$catalog_snapshot"}; }
 trap cleanup EXIT
 
 python3 - "$ENV_FILE" "$rendered_env" "$distribution_domain" "$origin_secret" <<'PY'
@@ -80,6 +82,19 @@ tar -C "$PROJECT_ROOT" -czf "$release_archive" \
   --exclude=.git --exclude=.env --exclude=.env.production --exclude=.venv \
   --exclude='*/node_modules' --exclude='*/dist' --exclude=Data --exclude='*/__pycache__' .
 aws s3 cp --region "$AWS_REGION" "$release_archive" "s3://${frontend_bucket}/${release_key}" --only-show-errors
+catalog_path="$PROJECT_ROOT/Data/.processing/catalog.sqlite3"
+if [ -f "$catalog_path" ]; then
+  catalog_snapshot="$(mktemp)"
+  python3 - "$catalog_path" "$catalog_snapshot" <<'PY'
+import sqlite3, sys
+source = sqlite3.connect(sys.argv[1])
+target = sqlite3.connect(sys.argv[2])
+source.backup(target)
+target.close(); source.close()
+PY
+  aws s3 cp --region "$AWS_REGION" "$catalog_snapshot" "s3://${frontend_bucket}/${catalog_key}" --only-show-errors
+  rm -f "$catalog_snapshot"
+fi
 
 echo "Waiting for the EC2 Systems Manager agent..."
 for _ in $(seq 1 60); do
@@ -91,9 +106,9 @@ for _ in $(seq 1 60); do
   sleep 10
 done
 
-commands=$(python3 - "$frontend_bucket" "$release_key" "$environment_secret" "$AWS_REGION" "$distribution_id" <<'PY'
+commands=$(python3 - "$frontend_bucket" "$release_key" "$catalog_key" "$environment_secret" "$AWS_REGION" "$distribution_id" <<'PY'
 import json, sys
-bucket, key, secret, region, distribution = sys.argv[1:]
+bucket, key, catalog_key, secret, region, distribution = sys.argv[1:]
 commands = [
     "set -eux",
     "mkdir -p /opt/cil-platform",
@@ -103,6 +118,7 @@ commands = [
     f"aws secretsmanager get-secret-value --secret-id {secret} --region {region} --query SecretString --output text > /opt/cil-platform/.env.production",
     "chmod 600 /opt/cil-platform/.env.production",
     "cd /opt/cil-platform && docker compose --env-file .env.production -f docker-compose.production.yml up -d --build --remove-orphans",
+    f"if aws s3 cp s3://{bucket}/{catalog_key} /tmp/cil-catalog.sqlite3 --region {region} --only-show-errors; then cd /opt/cil-platform && docker compose --env-file .env.production -f docker-compose.production.yml run --rm -v /tmp/cil-catalog.sqlite3:/migration/catalog.sqlite3:ro api python scripts/migrate_sqlite_to_postgres.py /migration/catalog.sqlite3; fi",
     "rm -rf /tmp/cil-frontend && mkdir -p /tmp/cil-frontend",
     "cd /opt/cil-platform && docker build --target frontend-export --output type=local,dest=/tmp/cil-frontend .",
     f"aws s3 sync /tmp/cil-frontend/ s3://{bucket}/ --delete --exclude 'deploy/*' --region {region}",
@@ -131,5 +147,6 @@ fi
 
 rm -f "$release_archive"
 aws s3 rm --region "$AWS_REGION" "s3://${frontend_bucket}/${release_key}" --only-show-errors
+aws s3 rm --region "$AWS_REGION" "s3://${frontend_bucket}/${catalog_key}" --only-show-errors 2>/dev/null || true
 echo "Deployment complete: https://${distribution_domain}"
 echo "Data root: s3://${data_bucket}/cil/"

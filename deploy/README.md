@@ -17,7 +17,7 @@ cp .env.production.example .env.production
 ./deploy/aws-deploy.sh cil-platform ap-south-1
 ```
 
-The script creates or updates the AWS stack, stores the production environment in Secrets Manager, syncs the current `Data/cil` tree into the versioned data bucket, ships the current checkout to EC2 through the private frontend bucket, starts the containers, publishes the frontend to S3, and invalidates CloudFront. It prints the final URL and S3 data root.
+The script creates or updates the AWS stack, stores the production environment in Secrets Manager, syncs the current `Data/cil` tree into the versioned data bucket, migrates the local SQLite workflow catalog into PostgreSQL, ships the current checkout to EC2 through the private frontend bucket, starts the containers, publishes the frontend to S3, and invalidates CloudFront. It prints the final URL and S3 data root.
 
 No SSH port is opened. Use AWS Systems Manager Session Manager for host access. The EC2 HTTP port requires a secret header that CloudFront adds, so direct origin requests are rejected by Nginx.
 
