@@ -12,7 +12,7 @@ from uuid import UUID
 from dotenv import dotenv_values
 
 PROJECT=Path(__file__).resolve().parents[1]
-config=dotenv_values(PROJECT/'.env')
+config={**dotenv_values(PROJECT/'.env'),**os.environ}
 # Deliberately do not copy Supabase/admin secrets into the analytics process.
 for key,value in config.items():
  if value and (key.startswith(('OPENAI_','AZURE_','ANTHROPIC_','GEMINI_','OLLAMA_','SARVAM_')) or key in ('DF_BRIDGE_SECRET','CIL_PROCESSING_ROOT','DF_SANDBOX','CIL_PRIMARY_PROVIDER','CIL_FALLBACK_PROVIDER')):os.environ[key]=value
@@ -177,4 +177,4 @@ def import_sources_impl():
  return json_ok({'tables':tables})
 
 if __name__=='__main__':
- app.run(host='127.0.0.1',port=5567,threaded=True,debug=False,use_reloader=False)
+ app.run(host=os.environ.get('DF_HOST','127.0.0.1'),port=int(os.environ.get('DF_PORT','5567')),threaded=True,debug=False,use_reloader=False)

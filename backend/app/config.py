@@ -18,6 +18,9 @@ class Settings(BaseSettings):
     # either location with an absolute environment variable.
     cil_data_root: Path = Path(__file__).resolve().parents[2] / 'Data' / 'cil'
     cil_processing_root: Path = Path(__file__).resolve().parents[2] / 'Data' / '.processing'
+    # Empty keeps the lightweight local SQLite catalog. Production points this
+    # at the PostgreSQL service running on the EC2 host.
+    database_url: SecretStr = SecretStr('')
     df_url: str = 'http://127.0.0.1:5567'
     df_bridge_secret: SecretStr = SecretStr('')
     workbench_cookie_secure: bool = False

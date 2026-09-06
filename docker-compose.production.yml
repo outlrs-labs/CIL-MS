@@ -1,0 +1,76 @@
+name: cil-platform
+
+x-app-environment: &app-environment
+  env_file: .env.production
+  environment:
+    CIL_DATA_ROOT: /srv/cil-data/cil
+    CIL_PROCESSING_ROOT: /srv/cil-processing
+    DATABASE_URL: postgresql://cil:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}@postgres:5432/cil
+    DF_URL: http://workbench:5567
+    DF_HOST: 0.0.0.0
+    WORKBENCH_COOKIE_SECURE: "true"
+
+services:
+  postgres:
+    image: postgres:16-bookworm
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: cil
+      POSTGRES_USER: cil
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cil -d cil"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [private]
+
+  workbench:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    <<: *app-environment
+    command: python integration/run_data_formulator.py
+    volumes:
+      - processing:/srv/cil-processing
+    networks: [private]
+
+  api:
+    build:
+      context: .
+      target: runtime
+    restart: unless-stopped
+    <<: *app-environment
+    command: python -m uvicorn app.main:app --app-dir backend --host 0.0.0.0 --port 8000 --proxy-headers --forwarded-allow-ips=edge
+    depends_on:
+      postgres:
+        condition: service_healthy
+      workbench:
+        condition: service_started
+    volumes:
+      - /srv/cil-data:/srv/cil-data
+      - processing:/srv/cil-processing
+    networks: [private]
+
+  edge:
+    image: nginx:1.27-alpine
+    restart: unless-stopped
+    environment:
+      ORIGIN_VERIFY_HEADER: ${ORIGIN_VERIFY_HEADER:?set ORIGIN_VERIFY_HEADER}
+    command: /bin/sh -c "envsubst '$$ORIGIN_VERIFY_HEADER' < /etc/nginx/templates/cil.conf.template > /etc/nginx/conf.d/default.conf && exec nginx -g 'daemon off;'"
+    volumes:
+      - ./deploy/nginx.conf.template:/etc/nginx/templates/cil.conf.template:ro
+    ports:
+      - "80:80"
+    depends_on: [api]
+    networks: [private]
+
+volumes:
+  postgres-data:
+  processing:
+
+networks:
+  private:

@@ -3,6 +3,16 @@
 **Updated:** 2026-09-05  
 **Purpose:** Handoff reference for developers and agents working with local report storage.
 
+## Production runtime
+
+- CloudFront is the public HTTPS address and keeps the portal and embedded analytics workbench on one origin.
+- The compiled React portal is stored in a private S3 frontend bucket.
+- The durable `Data/cil` hierarchy is stored in a separate versioned S3 bucket and mounted into EC2 at `/srv/cil-data`.
+- FastAPI, the private analytics workbench, Nginx, and PostgreSQL run on one EC2 instance through `docker-compose.production.yml`.
+- PostgreSQL stores upload, analysis, OCR, report-version, and audit metadata. Supabase stores authentication, entity membership, roles, and access policy.
+- OCR and workbench processing files remain on an EC2 Docker volume because they are rebuildable working artifacts.
+- Deployment definitions and the runbook live under `deploy/`.
+
 ## Storage boundary
 
 The user-facing repository is `/Users/harshyadav/Documents/CIL/Data/cil`, configured by `CIL_DATA_ROOT`. Backend-only state uses `CIL_PROCESSING_ROOT`, defaulting to `/Users/harshyadav/Documents/CIL/Data/.processing`.

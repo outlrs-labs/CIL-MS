@@ -112,3 +112,9 @@ AI credentials can be configured through **Settings → AI providers & models**,
 
 All seven production accounts now have ZIP submission, schedule/history, scoped analytics/chat and report drafting. CMPDI reviews cross-subsidiary submissions and generated revisions. Same-origin deployment must proxy `/api/analytics` to FastAPI. Upload needs no AI credential; PDF/image conversion uses local text extraction when a source is chosen in Analyse, while AI operations use the configured model provider.
 > Document workflow: install Tesseract (`brew install tesseract` on macOS). ZIP upload stores the original package only. OCR starts when a PDF or image is selected in Analyse; Markdown and CSV outputs are then imported into that workbench session.
+
+## AWS production deployment
+
+The production stack uses CloudFront as the single HTTPS origin, a private S3 bucket for the frontend, a versioned S3 bucket for the durable `Data/cil` hierarchy, and one EC2 host for FastAPI, the private analytics workbench, Nginx, and PostgreSQL. Supabase remains the authentication and authorization authority.
+
+Copy `.env.production.example` to `.env.production`, fill in the Supabase values, and run `./deploy/aws-deploy.sh cil-platform ap-south-1` from an AWS-authenticated computer. See [deploy/README.md](deploy/README.md) for the full procedure and operations notes.

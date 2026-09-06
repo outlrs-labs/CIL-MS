@@ -22,11 +22,12 @@ def initialize(repo):
     with repo.db() as db:db.execute('create table if not exists extractions(id text primary key, entity text, payload text)')
 
 def save(repo,job):
-    with repo.db() as db:db.execute('insert or replace into extractions values(?,?,?)',(job['id'],job['entity'],json.dumps(job)))
+    with repo.db() as db:db.execute('insert into extractions values(?,?,?) on conflict(id) do update set entity=excluded.entity,payload=excluded.payload',(job['id'],job['entity'],json.dumps(job)))
 
 def list_jobs(repo,entity=None):
     initialize(repo)
-    with repo.db() as db:rows=db.execute('select payload from extractions'+(' where entity=?' if entity else '')+' order by rowid desc',(entity,) if entity else ()).fetchall()
+    order="cast(payload as jsonb)->>'created' desc" if repo.uses_postgres else 'rowid desc'
+    with repo.db() as db:rows=db.execute('select payload from extractions'+(' where entity=?' if entity else '')+f' order by {order}',(entity,) if entity else ()).fetchall()
     return [json.loads(r[0]) for r in rows]
 
 def get(repo,id,entity=None):

@@ -41,15 +41,26 @@ class Repository:
    db.execute('create table if not exists analyses(id text primary key, owner text not null, payload text not null)')
    db.execute('create table if not exists reports(id text primary key, owner text not null, path text not null, title text not null, created real not null)')
    db.execute('create table if not exists audit_reviews(report_id text primary key,submitter text not null,entity text not null,category text not null default "",status text not null,assistant_reviewer text,manager_reviewer text,comment text not null default "",updated real not null)')
-   columns={row[1] for row in db.execute('pragma table_info(audit_reviews)')}
-   if 'category' not in columns:db.execute('alter table audit_reviews add column category text not null default ""')
+   if self.uses_postgres:
+    columns={row[0] for row in db.execute("select column_name from information_schema.columns where table_schema='public' and table_name='audit_reviews'")}
+   else:columns={row[1] for row in db.execute('pragma table_info(audit_reviews)')}
+   if 'category' not in columns:db.execute("alter table audit_reviews add column category text not null default ''")
    legacy=db.execute('select a.report_id,r.path from audit_reviews a join reports r on r.id=a.report_id where a.category=""').fetchall()
    for report_id,path in legacy:
     resolved=Path(path).resolve()
     if resolved.is_relative_to(self.root) and len(resolved.relative_to(self.root).parts)>1:
      db.execute('update audit_reviews set category=? where report_id=?',(resolved.relative_to(self.root).parts[1],report_id))
  def db(self):
+  if self.uses_postgres:
+   try:import psycopg
+   except ImportError:raise RuntimeError('PostgreSQL is configured but psycopg is not installed.') from None
+   from ..config import settings
+   return PostgresConnection(psycopg.connect(settings().database_url.get_secret_value()))
   db=sqlite3.connect(self.processing/'catalog.sqlite3',timeout=30);db.execute('pragma journal_mode=WAL');return db
+ @property
+ def uses_postgres(self):
+  from ..config import settings
+  return bool(settings().database_url.get_secret_value())
  def initialize(self):
   for entity in ENTITIES:
    for family in (TECHNICAL if entity=='CMPDI' else PRODUCTION):
@@ -74,13 +85,14 @@ class Repository:
       files.append({'id':hashlib.sha256(fingerprint.encode()).hexdigest(),'entity':entity,'family':family,'name':name,'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':suffix in FORMATS,'extractable':suffix in OCR_FORMATS,'format':suffix.lstrip('.')})
   return {'files':files,'folders':folders,'root_label':'Data/cil','entities':list(ENTITIES)}
  def put_analysis(self,value):
-  with self.db() as db:db.execute('insert or replace into analyses values(?,?,?)',(value['id'],value['owner'],json.dumps(value)))
+  with self.db() as db:db.execute('insert into analyses values(?,?,?) on conflict(id) do update set owner=excluded.owner,payload=excluded.payload',(value['id'],value['owner'],json.dumps(value)))
  def get_analysis(self,id,owner):
   with self.db() as db:row=db.execute('select payload from analyses where id=? and owner=?',(id,owner)).fetchone()
   if not row:raise HTTPException(404,'Analysis not found.')
   return json.loads(row[0])
  def list_analyses(self,owner):
-  with self.db() as db:rows=db.execute('select payload from analyses where owner=? order by rowid desc',(owner,)).fetchall()
+  order="cast(payload as jsonb)->>'created' desc" if self.uses_postgres else 'rowid desc'
+  with self.db() as db:rows=db.execute(f'select payload from analyses where owner=? order by {order}',(owner,)).fetchall()
   return [json.loads(r[0]) for r in rows]
  def snapshot(self,entry,analysis_id):
   path=self.root/entry['relative_path'];resolved=path.resolve()
@@ -119,7 +131,7 @@ class Repository:
   from .submissions import initialize
   initialize(self)
   with self.db() as db:
-   rows=db.execute('select r.id,r.path,r.title,coalesce(a.entity,""),coalesce(a.category,""),coalesce(v.version,1) from reports r left join audit_reviews a on a.report_id=r.id left join report_revisions v on v.id=r.id').fetchall()
+   rows=db.execute("select r.id,r.path,r.title,coalesce(a.entity,''),coalesce(a.category,''),coalesce(v.version,1) from reports r left join audit_reviews a on a.report_id=r.id left join report_revisions v on v.id=r.id").fetchall()
   labels={}
   for report_id,path,title,entity,category,version in rows:
    resolved=Path(path).resolve()
@@ -145,8 +157,9 @@ class Repository:
    if owner[0]!=submitter:raise HTTPException(403,'Only the report author can submit it for audit.')
    current=db.execute('select status from audit_reviews where report_id=?',(report_id,)).fetchone()
    if current and current[0] not in ('rejected','changes_requested'):raise HTTPException(409,'This report is already in audit.')
-   db.execute('insert into audit_reviews(report_id,submitter,entity,category,status,updated) values(?,?,?,?,?,?) on conflict(report_id) do update set category=excluded.category,status="pending_review",assistant_reviewer=null,manager_reviewer=null,comment="",updated=excluded.updated',(report_id,submitter,entity,category,'pending_review',now))
+   db.execute("insert into audit_reviews(report_id,submitter,entity,category,status,updated) values(?,?,?,?,?,?) on conflict(report_id) do update set category=excluded.category,status='pending_review',assistant_reviewer=null,manager_reviewer=null,comment='',updated=excluded.updated",(report_id,submitter,entity,category,'pending_review',now))
   return self.audit(report_id)
+
  def audit(self,report_id):
   from .submissions import initialize
   initialize(self)
@@ -175,3 +188,15 @@ class Repository:
    result=db.execute(f'update audit_reviews set status=?,{column}=?,comment=?,updated=? where report_id=? and status=?',(status,reviewer,comment.strip(),time.time(),report_id,item['status']))
    if result.rowcount!=1:raise HTTPException(409,'This report has already been reviewed. Refresh the queue.')
   return self.audit(report_id)
+
+class PostgresConnection:
+ """Tiny DB-API adapter that preserves the repository's portable SQL surface."""
+ def __init__(self,connection):self.connection=connection
+ def __enter__(self):return self
+ def __exit__(self,kind,value,traceback):
+  if kind:self.connection.rollback()
+  else:self.connection.commit()
+  self.connection.close()
+ def execute(self,sql,parameters=()):
+  if sql.strip().lower()=='begin immediate':sql='begin'
+  return self.connection.execute(sql.replace('?', '%s'),parameters)
