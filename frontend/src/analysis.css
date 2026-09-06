@@ -1,9 +1,22 @@
 .analysis-dashboard{display:grid;gap:21px}
 .analysis-sourcebar{display:flex;align-items:center;gap:13px;padding:13px}
+.workbench-mode{display:contents}
+.workbench-mode .analysis-sourcebar{flex:0 0 auto;border:0;border-bottom:1px solid var(--line);border-radius:0;padding:10px 16px;min-height:52px;box-shadow:none}
+.workbench-selection-count{font-size:var(--type-small);color:var(--muted)}
+.analytics-readiness{display:inline-flex;align-items:center;gap:7px;margin-left:auto;color:var(--muted);font-size:var(--type-small);white-space:nowrap}
+.analytics-readiness i{width:7px;height:7px;border-radius:50%;background:#8d8d8d}
+.analytics-readiness.ready i{background:#24a148}.analytics-readiness.offline i{background:#da1e28}.analytics-readiness.checking i{animation:pulse 1.2s ease-in-out infinite}
 .selected-source-preview{display:flex;gap:8px;align-items:center;min-width:0;flex:1;overflow:hidden}
 .selected-source-preview span{display:inline-flex;align-items:center;gap:6px;padding:6px 8px;background:var(--surface-alt);white-space:nowrap;max-width:220px;overflow:hidden;text-overflow:ellipsis}
 .selected-source-preview .empty-selection{color:var(--muted);background:transparent}
 .analysis-launch{display:grid;gap:13px;padding:21px}
+.version-report-builder{display:grid;gap:0}
+.version-report-builder .section-heading{padding-bottom:16px}
+.version-report-fields{display:grid;grid-template-columns:1fr 1fr;gap:16px;padding:0 21px 16px;border-top:1px solid var(--line)}
+.version-report-fields .field{margin:16px 0 0}
+.version-report-summary{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:14px 21px;background:var(--surface-alt);border-top:1px solid var(--line)}
+.version-report-summary strong,.version-report-summary span{display:block}.version-report-summary span{margin-top:4px;color:var(--muted);font-size:12px}
+.version-report-summary .analytics-actions{display:flex;gap:9px;flex-wrap:wrap;justify-content:flex-end}
 .analysis-launch-fields{display:grid;grid-template-columns:1fr 1fr;gap:21px}
 .analysis-launch .field{margin:0}
 .analysis-launch details{border-top:1px solid var(--line);padding-top:13px}
@@ -75,19 +88,41 @@
 .source-empty strong{color:var(--text)}
 .source-empty span{font-size:var(--type-small)}
 
-.analysis-workbench{border:1px solid var(--line);background:var(--surface)}
+.analysis-main{height:calc(var(--app-viewport,100dvh) - 56px);padding:0!important;overflow:hidden}
+.analysis-main>div,.analysis-main .analytics-workspace[data-view=analysis]{height:100%;min-height:0}
+.analytics-workspace[data-view=analysis]{display:flex;flex-direction:column;gap:0}
+.analytics-workspace[data-view=analysis]>.analytics-content{display:flex;flex:1;min-height:0;flex-direction:column;gap:0}
+.analysis-workbench{border:0;background:var(--surface)}
 .analysis-workbench-bar{display:flex;align-items:center;gap:13px;padding:8px 13px;border-bottom:1px solid var(--line)}
 .analysis-workbench-bar strong{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.analysis-workbench iframe{display:block;width:100%;height:calc(var(--app-viewport,100dvh) - 165px);min-height:620px;border:0;background:#fff}
+.analysis-workbench iframe{display:block;width:100%;height:100%;min-height:0;border:0;background:#fff}
 .analysis-workbench iframe:fullscreen{height:100vh;width:100%;zoom:1}
-/* Keep pointer coordinates in the embedded chart canvas at native scale. */
-.analysis-workbench{display:flex;flex-direction:column;height:calc(var(--app-viewport) - 174px);min-height:480px;}
+/*
+ * The portal is density-scaled at the document root. Do not inverse-zoom the
+ * embedded workbench: Chromium then paints the iframe at one scale while hit
+ * testing its MUI portals, sliders and HTML5 drag targets at another. Keeping
+ * the frame at the layout size preserves click/drag coordinates and removes
+ * the artificial overflow strip on the right.
+ */
+.analysis-workbench{display:flex;flex:1;min-height:0;flex-direction:column;height:auto;overflow:hidden}
 .analysis-workbench-bar{flex-shrink:0;flex-wrap:wrap;}
-.analysis-workbench iframe{zoom:calc(1 / var(--app-scale));width:calc(100% * var(--app-scale));height:0;min-height:0;flex:1;}
+.analysis-workbench iframe{zoom:1;width:100%;height:0;min-height:0;flex:1;}
+.workbench-report-result{flex:0 0 auto;border-width:0 0 1px!important;}
+.analysis-workbench-empty{place-content:center;place-items:center;gap:8px;color:var(--muted);text-align:center;background:linear-gradient(180deg,var(--surface),color-mix(in srgb,var(--surface-alt) 45%,var(--surface)))}
+.analysis-workbench-empty strong{font-size:var(--type-body);font-weight:500;color:var(--text)}
+.analysis-workbench-empty>span:last-child{font-size:var(--type-small)}
+.analysis-empty-icon{display:grid;place-items:center;width:48px;height:48px;margin-bottom:5px;background:var(--subtle);color:var(--accent)}
+.analysis-progress{width:min(300px,60vw);height:4px;margin-top:8px;background:var(--surface-alt);overflow:hidden}
+.analysis-progress i{display:block;height:100%;min-width:2px;background:var(--accent);transition:width .3s ease}
+.analysis-workbench-empty>.analysis-progress+small{font-size:var(--type-caption);color:var(--muted);font-variant-numeric:tabular-nums}
+@keyframes pulse{50%{opacity:.35}}
 
 @media(max-width:850px){
  .analysis-launch-fields{grid-template-columns:1fr}
+ .version-report-fields{grid-template-columns:1fr}
+ .version-report-summary{align-items:flex-start;flex-direction:column}.version-report-summary .analytics-actions{justify-content:flex-start}
  .source-browser{grid-template-columns:220px minmax(0,1fr)}
+ .analysis-main{height:calc(var(--app-viewport,100dvh) - 56px);padding:0!important}
  .analysis-workbench{overflow:auto}
  .analysis-workbench iframe{min-width:1024px}
  .analysis-paths{grid-template-columns:1fr}.analysis-paths article{grid-template-columns:28px minmax(0,1fr)}

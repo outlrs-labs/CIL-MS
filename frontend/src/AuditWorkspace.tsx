@@ -14,7 +14,7 @@ export function AuditWorkspace({token,position='contributor',onChange}:{token:st
  const [items,setItems]=useState<Audit[]>([]),[selected,setSelected]=useState<Audit|null>(null);
  const [reportText,setReportText]=useState(''),[reportImage,setReportImage]=useState(''),[note,setNote]=useState('');
  const [loading,setLoading]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState('');
- const canReview=position==='manager';
+ const canReview=position==='assistant_manager'||position==='manager';
 
  async function request(path:string,method='GET',body?:unknown){
   const response=await fetch('/api/analytics'+path,{method,headers:{Authorization:`Bearer ${token}`,...(body?{'Content-Type':'application/json'}:{})},...(body?{body:JSON.stringify(body)}:{})});
@@ -55,7 +55,7 @@ export function AuditWorkspace({token,position='contributor',onChange}:{token:st
  }
  const pending=items.filter(item=>openStatuses.has(item.status)).length;
  return <section className="audit-simple">
-  <header className="audit-simple-heading"><div><h2>File approval</h2><p>Reports for this subsidiary stay here until its manager approves them for CMPDI.</p></div><div><span>{pending} ongoing</span><button className="icon-button" aria-label="Refresh audit requests" onClick={()=>void refresh()}><RefreshCw size={17}/></button></div></header>
+  <header className="audit-simple-heading"><div><h2>File approval</h2><p>Reports stay here until an assistant manager or manager approves them for CMPDI.</p></div><div><span>{pending} ongoing</span><button className="icon-button" aria-label="Refresh audit requests" onClick={()=>void refresh()}><RefreshCw size={17}/></button></div></header>
   {error&&!selected&&<p className="error" role="alert">{error}</p>}
   <div className={'audit-simple-layout '+(selected?'has-selection':'')}>
    <nav className="audit-request-list" aria-label="Audit requests">
@@ -69,7 +69,7 @@ export function AuditWorkspace({token,position='contributor',onChange}:{token:st
     <div className="audit-preview-body">{loading?<p role="status">Opening report…</p>:reportImage?<img src={reportImage} alt="Generated report preview"/>:<pre>{reportText}</pre>}</div>
     <footer>
      {error&&<p className="error" role="alert">{error}</p>}
-     {openStatuses.has(selected.status)&&canReview?<><label className="field">Review note <span>Required only for rejection</span><textarea value={note} maxLength={1000} onChange={event=>setNote(event.target.value)} placeholder="Add a short note if needed"/></label><div className="audit-decisions"><button className="button audit-reject" disabled={busy||loading} onClick={()=>void decide('reject')}><XCircle size={17}/>Reject</button><button className="button secondary" disabled={busy||loading} onClick={()=>void decide('await')}><Clock3 size={17}/>Await</button><button className="button primary" disabled={busy||loading} onClick={()=>void decide('approve')}><Check size={17}/>Approve</button></div></>:<p className="audit-outcome">{selected.status==='submitted_to_cmpdi'?'Approved and submitted to CMPDI.':selected.status==='rejected'?'This report was rejected.':canReview?'This request is complete.':'Waiting for the subsidiary manager.'}</p>}
+     {openStatuses.has(selected.status)&&canReview?<><label className="field">Review note <span>Required only for rejection</span><textarea value={note} maxLength={1000} onChange={event=>setNote(event.target.value)} placeholder="Add a short note if needed"/></label><div className="audit-decisions"><button className="button audit-reject" disabled={busy||loading} onClick={()=>void decide('reject')}><XCircle size={17}/>Reject</button><button className="button secondary" disabled={busy||loading} onClick={()=>void decide('await')}><Clock3 size={17}/>Await</button><button className="button primary" disabled={busy||loading} onClick={()=>void decide('approve')}><Check size={17}/>Approve</button></div></>:<p className="audit-outcome">{selected.status==='submitted_to_cmpdi'?'Approved and submitted to CMPDI.':selected.status==='rejected'?'This report was rejected.':canReview?'This request is complete.':'Waiting for an assistant manager or manager.'}</p>}
      <button className="text-button audit-download" onClick={()=>void download()}><Download size={15}/>Download report</button>
     </footer>
    </article>}

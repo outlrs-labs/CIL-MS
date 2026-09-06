@@ -11,16 +11,16 @@ from pathlib import Path
 from uuid import UUID
 from dotenv import dotenv_values
 
-PROJECT=Path(__file__).resolve().parents[1];ROOT=PROJECT.parent
+PROJECT=Path(__file__).resolve().parents[1]
 config=dotenv_values(PROJECT/'.env')
 # Deliberately do not copy Supabase/admin secrets into the analytics process.
 for key,value in config.items():
- if value and (key.startswith(('OPENAI_','AZURE_','ANTHROPIC_','GEMINI_','OLLAMA_')) or key in ('DF_BRIDGE_SECRET','CIL_PROCESSING_ROOT','DF_SANDBOX')):os.environ[key]=value
+ if value and (key.startswith(('OPENAI_','AZURE_','ANTHROPIC_','GEMINI_','OLLAMA_','SARVAM_')) or key in ('DF_BRIDGE_SECRET','CIL_PROCESSING_ROOT','DF_SANDBOX','CIL_PRIMARY_PROVIDER','CIL_FALLBACK_PROVIDER')):os.environ[key]=value
 secret=os.environ.get('DF_BRIDGE_SECRET','')
 if len(secret)<32:raise SystemExit('Set DF_BRIDGE_SECRET (at least 32 random characters) in cil-platform/.env.')
-processing=Path(config.get('CIL_PROCESSING_ROOT') or ROOT/'Data'/'.processing').resolve()
+processing=Path(config.get('CIL_PROCESSING_ROOT') or PROJECT/'Data'/'.processing').resolve()
 os.environ.update(AUTH_PROVIDER='cil',ALLOW_ANONYMOUS='false',HOST='private',DATA_FORMULATOR_HOME=str(processing/'workspaces'),DISABLE_DATA_CONNECTORS='true',DISABLE_CUSTOM_MODELS='true',DISABLE_DISPLAY_KEYS='true',SANDBOX=config.get('DF_SANDBOX') or 'local')
-sys.path.insert(0,str(ROOT/'data-formulator'/'py-src'))
+sys.path.insert(0,str(PROJECT/'data-formulator-main'/'py-src'))
 from flask import request,abort
 from data_formulator.auth.providers.base import AuthProvider,AuthResult,AuthenticationError
 from data_formulator.auth import providers
@@ -42,18 +42,35 @@ from data_formulator.model_registry import model_registry
 from cryptography.fernet import Fernet
 import base64
 base_models=dict(model_registry._models)
+def environment_model(role):
+ default='sarvam' if role=='primary' else 'gemini'
+ preferred=os.environ.get('CIL_PRIMARY_PROVIDER' if role=='primary' else 'CIL_FALLBACK_PROVIDER',default).strip().lower()
+ # Custom OpenAI-compatible providers (including Sarvam) expose endpoint
+ # ``openai``. Match their server-generated provider id before falling back
+ # to a built-in endpoint match.
+ exact=next((m for m in base_models.values() if m.get('id','').startswith(f'global-{preferred}-')),None)
+ if exact:return exact
+ return next((m for m in base_models.values() if m.get('endpoint')==preferred),None)
 def refresh_local_models():
  path=processing/'private'/'model-providers.enc'
  entries=json.loads(Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())).decrypt(path.read_bytes())) if path.exists() else []
  models=dict(base_models)
- primary=next((p for p in entries if p.get('role')=='primary' and p.get('models')),None)
- fallbacks=[p for p in entries if p.get('role')=='fallback' and p.get('models')]
+ configured_primary=next((p for p in entries if p.get('role')=='primary' and p.get('models')),None)
+ configured_fallbacks=[p for p in entries if p.get('role')=='fallback' and p.get('models')]
+ server_primary=environment_model('primary')
+ gemini_fallback=environment_model('fallback')
+ primary=server_primary or configured_primary
  if primary:
   def runtime_config(provider,name):
    return {'endpoint':provider['endpoint'],'model':name,'api_key':provider['api_key'],'api_base':provider.get('api_base',''),'api_version':provider.get('api_version',''),'timeout_seconds':provider.get('timeout_seconds',30)}
-  auto=runtime_config(primary,primary['models'][0])
-  auto.update({'id':'cil-auto','provider_display':'CIL Auto · fast with fallback','fallbacks':[runtime_config(p,p['models'][0]) for p in fallbacks]})
-  models['cil-auto']=auto
+  auto=dict(primary) if server_primary else runtime_config(primary,primary['models'][0])
+  fallback_configs=[]
+  if gemini_fallback and gemini_fallback.get('id')!=auto.get('id'):fallback_configs.append(dict(gemini_fallback))
+  fallback_configs.extend(runtime_config(p,p['models'][0]) for p in configured_fallbacks)
+  auto.update({'id':'cil-auto','provider_display':'CIL Auto · server primary with Gemini fallback','fallbacks':fallback_configs,'timeout_seconds':18})
+  # CIL Auto is deliberately first so a fresh workbench chooses the secured
+  # server-side route instead of presenting raw provider entries as the default.
+  models={'cil-auto':auto,**models}
  for provider in entries:
   if provider.get('role') in ('primary','fallback'):continue
   for name in provider['models']:
@@ -84,7 +101,9 @@ def scoped_registry(*args,**kwargs):
 analyst_module.build_registry=scoped_registry
 
 @app.get('/cil/health')
-def health():return json_ok({'models':model_registry.list_public(),'sandbox':app.config['CLI_ARGS']['sandbox']})
+def health():
+ models=model_registry.list_public()
+ return json_ok({'models':models,'model_ready':bool(models),'sandbox':app.config['CLI_ARGS']['sandbox']})
 
 @app.post('/cil/import')
 def import_sources():
@@ -132,6 +151,15 @@ def import_sources_impl():
    with duckdb.connect() as con:
     con.execute("SET memory_limit='512MB'")
     con.execute("COPY (SELECT * FROM read_json_auto(?)) TO ? (FORMAT PARQUET, COMPRESSION ZSTD)",[str(src),str(dest)])
+  elif ext=='.md':
+   text=src.read_text(encoding='utf8',errors='replace')
+   blocks=[];heading='Document'
+   for block in filter(None,(part.strip() for part in text.split('\n\n'))):
+    if block.startswith('#'):
+     heading=block.lstrip('#').strip() or heading
+    else:blocks.append({'section':heading,'content':block})
+   if not blocks:blocks=[{'section':heading,'content':text.strip()}]
+   pq.write_table(pa.Table.from_pylist(blocks,schema=pa.schema([('section',pa.string()),('content',pa.string())])),dest,compression='zstd')
   else:raise ValueError('Unsupported structured file.')
   parquet=pq.ParquetFile(dest);schema=parquet.schema_arrow;rowcount=parquet.metadata.num_rows
   meta=TableMetadata(name=name,source_type='upload',filename=name+'.parquet',file_type='parquet',created_at=datetime.now(timezone.utc),content_hash=source['sha256'],file_size=dest.stat().st_size,row_count=rowcount,columns=[ColumnInfo(f.name,str(f.type)) for f in schema],original_name=source['name'],description=f"{source['entity']} / {source['family']} / {source['relative_path']}. SHA256 {source['sha256']}. All source rows; reporting period context: {data.get('period') or 'unspecified'}. Excel values may require explicit numeric/date conversion.")

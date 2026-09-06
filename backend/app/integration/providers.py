@@ -34,7 +34,7 @@ def public_config(c):return {k:v for k,v in c.items() if k!='api_key'}
 def all_providers():
  return read_providers(location(),settings().df_bridge_secret.get_secret_value())
 def validate_provider(data):
- if data.endpoint not in ('openai','azure','anthropic','gemini','ollama','compatible'):raise HTTPException(422,'Select a supported provider.')
+ if data.endpoint not in ('openai','azure','anthropic','gemini','sarvam','ollama','compatible'):raise HTTPException(422,'Select a supported provider.')
  if any(not m.strip() or len(m)>150 for m in data.models):raise HTTPException(422,'Enter valid model identifiers.')
  if data.endpoint!='ollama' and not data.api_key.get_secret_value().strip():raise HTTPException(422,'An API key is required.')
  if data.endpoint in ('azure','compatible','ollama') and not data.api_base:raise HTTPException(422,'This provider needs an API base URL.')
@@ -56,7 +56,9 @@ def validate_provider(data):
 def add_provider(data):
  validate_provider(data);items=all_providers()
  if len(items)>=30:raise HTTPException(422,'Provider limit reached; remove unused configurations.')
- item={'id':str(uuid4()),'name':data.name,'endpoint':'openai' if data.endpoint=='compatible' else data.endpoint,'kind':data.endpoint,'models':[m.strip() for m in data.models],'api_key':data.api_key.get_secret_value(),'api_base':data.api_base.rstrip('/'),'api_version':data.api_version,'role':data.role,'timeout_seconds':data.timeout_seconds}
+ runtime_endpoint='openai' if data.endpoint in ('compatible','sarvam') else data.endpoint
+ api_base=(data.api_base or ('https://api.sarvam.ai/v1' if data.endpoint=='sarvam' else '')).rstrip('/')
+ item={'id':str(uuid4()),'name':data.name,'endpoint':runtime_endpoint,'kind':data.endpoint,'models':[m.strip() for m in data.models],'api_key':data.api_key.get_secret_value(),'api_base':api_base,'api_version':data.api_version,'role':data.role,'timeout_seconds':data.timeout_seconds}
  items.append(item);save(items);return public_config(item)
 def save(items):
  path=location();path.parent.mkdir(parents=True,exist_ok=True);path.parent.chmod(0o700)

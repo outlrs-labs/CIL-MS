@@ -53,10 +53,29 @@ def enqueue(repo,submission_id,filename,owner,entity):
     if active:return active
     id=str(uuid4());folder=repo.root/record['entity']/record['family']/'extractions'/id
     folder.mkdir(parents=True)
-    job={'id':id,'entity':record['entity'],'family':record['family'],'submission_id':submission_id,'filename':filename,'source_sha256':entry['sha256'],'source_path':source.relative_to(repo.root).as_posix(),'folder':folder.relative_to(repo.root).as_posix(),'owner':owner,'created':time.time(),'status':'queued','pages':[],'artifacts':[],'error':None}
+    job={'id':id,'entity':record['entity'],'family':record['family'],'submission_id':submission_id,'filename':filename,'source_sha256':entry['sha256'],'source_path':source.relative_to(repo.root).as_posix(),'folder':folder.relative_to(repo.root).as_posix(),'owner':owner,'created':time.time(),'status':'queued','phase':'queued','progress':0,'current_page':0,'page_count':None,'pages':[],'artifacts':[],'error':None}
     save(repo,job)
     task=asyncio.create_task(run(repo,id));tasks.add(task);task.add_done_callback(tasks.discard)
     return job
+
+async def ensure_for_analysis(repo,entry,owner,on_progress=None):
+    """Return immutable OCR outputs for a selected PDF/image, creating them on demand."""
+    submission_id=entry.get('submission_id')
+    if not submission_id:raise HTTPException(422,'OCR requires a document stored in a versioned ZIP submission.')
+    candidates=[job for job in list_jobs(repo,entry['entity']) if job['submission_id']==submission_id and job['filename']==entry['name'] and job.get('source_sha256')==entry.get('sha256')]
+    completed=next((job for job in candidates if job['status'] in ('reviewed','partial') and any(a.get('approved') for a in job.get('artifacts',[]))),None)
+    if completed:
+        if on_progress:on_progress(completed)
+        return completed
+    job=enqueue(repo,submission_id,entry['name'],owner,entry['entity'])
+    while True:
+        current=get(repo,job['id'],entry['entity'])
+        if on_progress:on_progress(current)
+        if current['status'] in ('reviewed','partial'):
+            if not any(a.get('approved') for a in current.get('artifacts',[])):raise HTTPException(422,'OCR finished without usable Markdown or CSV output.')
+            return current
+        if current['status']=='failed':raise HTTPException(422,current.get('error') or 'OCR could not extract usable data from the selected document.')
+        await asyncio.sleep(.5)
 
 async def run(repo,id):
     async with worker_lock:
@@ -70,7 +89,7 @@ async def run(repo,id):
             if proc.returncode or job['status']=='running':raise RuntimeError('Extraction process failed. Retry the file or inspect the local worker environment.')
         except BaseException as exc:
             if proc and proc.returncode is None:proc.kill();await proc.wait()
-            job=get(repo,id);job.update(status='failed',error='Extraction timed out after 15 minutes.' if isinstance(exc,asyncio.TimeoutError) else 'Extraction interrupted or failed. Retry this file.');save(repo,job)
+            job=get(repo,id);job.update(status='failed',phase='failed',progress=100,error='Extraction timed out after 15 minutes.' if isinstance(exc,asyncio.TimeoutError) else 'Extraction interrupted or failed. Retry this file.');save(repo,job)
             if isinstance(exc,asyncio.CancelledError):raise
 
 def artifact_path(repo,job,name):
@@ -107,6 +126,30 @@ def approve(repo,job,name,reviewer,corrected_csv=None):
     save(repo,job);atomic_json(repo.root/job['folder']/'review.json',job)
     return job
 
+def auto_approve(repo,job):
+    """Publish extracted text/table artifacts immediately after a successful run.
+
+    Source files remain immutable. A reviewed copy is created for the analytics
+    catalog so the automatic path has the same provenance guarantees as manual
+    approval, while word-position diagnostics stay out of the catalog.
+    """
+    failures=any(p['status'] in ('failed','no_text') for p in job.get('pages',[]))
+    published=False
+    for artifact in job.get('artifacts',[]):
+        if artifact.get('kind')=='word_positions' or artifact.get('approved'):
+            continue
+        source=artifact_path(repo,job,artifact['name'])
+        target=source.with_name('reviewed-'+source.name)
+        if not target.exists():shutil.copyfile(source,target)
+        artifact.update(approved=True,reviewer='system',auto_approved=True,reviewed_at=time.time(),reviewed_path=target.relative_to(repo.root).as_posix(),sha256=submissions.hash_file(target))
+        published=True
+    if published:
+        job['status']='partial' if failures else 'reviewed'
+        job['phase']='complete' if not failures else 'complete_with_issues'
+        job['progress']=100
+        save(repo,job);atomic_json(repo.root/job['folder']/'review.json',job)
+    return job
+
 def catalog_files(repo,entity,include_history):
     records=submissions.history(repo,entity);latest={}
     for r in records:latest.setdefault((r['entity'],r['family'],r['cadence'],r['period']),r['id'])
@@ -122,5 +165,6 @@ def catalog_files(repo,entity,include_history):
             if identity in seen and not include_history:continue
             seen.add(identity)
             path=repo.root/a['reviewed_path'];stat=path.stat();relative=a['reviewed_path']
-            files.append({'id':hashlib.sha256(f'{relative}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest(),'entity':record['entity'],'family':record['family'],'name':job['filename']+' · '+a['name'],'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':True,'submission_id':record['id'],'version':record['version'],'cadence':record['cadence'],'period':record['period'],'is_latest':current,'extraction_id':job['id'],'source_sha256':job['source_sha256'],'reviewed':True})
+            suffix=path.suffix.lower()
+            files.append({'id':hashlib.sha256(f'{relative}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest(),'entity':record['entity'],'family':record['family'],'name':job['filename']+' · '+a['name'],'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':suffix in ('.csv','.md'),'extractable':False,'format':suffix.lstrip('.'),'submission_id':record['id'],'version':record['version'],'cadence':record['cadence'],'period':record['period'],'is_latest':current,'extraction_id':job['id'],'source_sha256':job['source_sha256'],'reviewed':True})
     return files

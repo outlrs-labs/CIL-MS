@@ -26,6 +26,7 @@ TECHNICAL = {
 OPERATING=('ECL','BCCL','CCL','NCL','WCL','SECL','MCL')
 ENTITIES=(*OPERATING,'CMPDI')
 FORMATS={'.csv','.xlsx','.json','.parquet'}
+OCR_FORMATS={'.pdf','.png','.jpg','.jpeg','.tif','.tiff'}
 
 def atomic_json(path, value):
  path.parent.mkdir(parents=True,exist_ok=True)
@@ -69,7 +70,8 @@ class Repository:
       if not resolved.is_relative_to(self.root):continue
       stat=path.stat();relative=path.relative_to(self.root).as_posix()
       fingerprint=f'{relative}:{stat.st_size}:{stat.st_mtime_ns}'
-      files.append({'id':hashlib.sha256(fingerprint.encode()).hexdigest(),'entity':entity,'family':family,'name':name,'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':path.suffix.lower() in FORMATS})
+      suffix=path.suffix.lower()
+      files.append({'id':hashlib.sha256(fingerprint.encode()).hexdigest(),'entity':entity,'family':family,'name':name,'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':suffix in FORMATS,'extractable':suffix in OCR_FORMATS,'format':suffix.lstrip('.')})
   return {'files':files,'folders':folders,'root_label':'Data/cil','entities':list(ENTITIES)}
  def put_analysis(self,value):
   with self.db() as db:db.execute('insert or replace into analyses values(?,?,?)',(value['id'],value['owner'],json.dumps(value)))
@@ -160,13 +162,13 @@ class Repository:
   for item in items:item['version']=item['version'] or 1
   return items
  def decide_audit(self,report_id,reviewer,position,decision,comment):
-  if position!='manager':raise HTTPException(403,'Only the subsidiary manager can review audit requests.')
+  if position not in ('assistant_manager','manager'):raise HTTPException(403,'Only an assistant manager or manager can review audit requests.')
   item=self.audit(report_id)
   if item['submitter']==reviewer:raise HTTPException(403,'The report author cannot audit their own report.')
   if item['status'] not in ('pending_review','awaiting','assistant_manager_pending','manager_pending'):raise HTTPException(409,'This request is already complete.')
   status={'approve':'submitted_to_cmpdi','await':'awaiting','reject':'rejected'}.get(decision)
   if not status:raise HTTPException(422,'Choose Approve, Await or Reject.')
-  column='manager_reviewer'
+  column='assistant_reviewer' if position=='assistant_manager' else 'manager_reviewer'
   if decision not in ('approve','await','reject'):raise HTTPException(422,'Choose Approve, Await or Reject.')
   if decision=='reject' and not comment.strip():raise HTTPException(422,'Explain what needs to change.')
   with self.db() as db:

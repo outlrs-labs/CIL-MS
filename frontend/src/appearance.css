@@ -40,14 +40,15 @@ td{color:var(--text);}td,th{border-color:var(--line);font-size:12px;}th,td small
 .analytics-workspace[data-view=vault]>.analytics-content{display:none;}.analytics-workspace{gap:20px;}.workbench-panel iframe{height:calc(100dvh - 250px);min-height:600px;}.entity-choice label,.entity-chips span,.apex-node,.branch,.role-tile,.extraction-review{background:var(--surface-alt);border-color:var(--line);color:var(--text);}.entity-choice label:has(input:checked){background:var(--subtle);border-color:var(--accent);}.saved-analysis,.extraction-source,.extraction-artifacts>div{border-color:var(--line);}.saved-analysis small,.extraction-source small,.extraction-artifacts span{color:var(--muted);}.history-toggle{color:var(--muted);}
 .confirm-upload input{width:16px;height:16px;}.sidebar-utility button.active{background:var(--subtle)!important;color:var(--accent)!important;}
 .workbench-panel{scroll-margin-top:76px;}.app-shell[class] .reporting-workspace p,.reporting-flow li span,.reporting-entity-list span,.reporting-entity-list small{color:var(--muted);}.details dd{color:var(--text);}.details dt,.access-list,.branch p,.branch-footer{color:var(--muted);}.connector-line{background:var(--line);}
+.extraction-progress{max-width:620px;margin:22px auto 0;border:1px solid var(--line);text-align:left;padding:14px;background:var(--surface-alt);}.extraction-progress-heading{display:flex;justify-content:space-between;gap:16px;margin-bottom:10px;font-size:12px;}.extraction-progress-heading span{color:var(--muted);}.extraction-job-list{display:grid;gap:6px;max-height:220px;overflow:auto;}.extraction-job{display:flex;align-items:center;gap:9px;padding:8px 9px;border:1px solid var(--line);background:var(--surface);min-width:0;}.extraction-job>div{display:grid;gap:2px;min-width:0;flex:1;}.extraction-job strong{font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.extraction-job small{font-size:11px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}.extraction-job-dot{width:8px;height:8px;border-radius:50%;background:var(--muted);flex-shrink:0;}.extraction-job-dot.running{background:var(--accent);box-shadow:0 0 0 3px var(--subtle);}.extraction-job-dot.reviewed{background:var(--accent-base);}.extraction-job-dot.failed,.extraction-job-dot.partial{background:#c2410c;}.extraction-job-progress{font-size:11px;color:var(--accent);font-variant-numeric:tabular-nums;}
 @media(prefers-reduced-motion:reduce){.sidebar,button{transition:none;}.spin{animation:none;}}
 
-/* Desktop density target: match the preferred view while the browser remains at 100%.
-   Keep compact and touch layouts at their native scale for usability. */
-/* Match the chosen density while keeping viewport-sized surfaces full height. */
+/* Keep the document at native browser scale. CSS zoom on an ancestor of the
+   analytics iframe desynchronizes React-DnD/MUI pointer coordinates from what
+   Chromium paints, which makes fields, menus, filters and chart controls appear
+   unresponsive. Density is expressed through the component tokens instead. */
 :root{--app-scale:1;--app-viewport:100dvh;}
 html,body,#root{min-height:var(--app-viewport);background:var(--canvas);}
-@media(min-width:851px){:root{zoom:.825;--app-scale:.825;--app-viewport:calc(100dvh / .825);}}
 .app-shell,.main-shell{min-height:var(--app-viewport);}
 .workspace-page-heading{margin:0 0 24px;padding:0 0 18px;position:relative;}
 .workspace-page-heading h1{margin:0;font-size:var(--type-h1,26px);line-height:1.2;font-weight:600;}

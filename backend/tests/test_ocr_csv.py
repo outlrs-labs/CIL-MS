@@ -40,7 +40,7 @@ def test_dot_prefix_zip_is_valid(tmp_path):
  assert record['files'][0]['name']=='folder/production.csv'
 
 @pytest.mark.skipif(not ocr.engine(),reason='Local Tesseract is required')
-def test_real_image_ocr_review_and_scoped_catalog(tmp_path):
+def test_real_image_ocr_auto_publish_and_scoped_catalog(tmp_path):
  from PIL import Image,ImageDraw,ImageFont
  repo=Repository(tmp_path/'cil',tmp_path/'processing');repo.initialize();archive=tmp_path/'input.zip'
  picture=Image.new('RGB',(1400,650),'white');draw=ImageDraw.Draw(picture);font=ImageFont.load_default(size=42)
@@ -51,12 +51,11 @@ def test_real_image_ocr_review_and_scoped_catalog(tmp_path):
  async def run():
   job=ocr.enqueue(repo,record['id'],'scan.png','fixture','BCCL')
   await asyncio.gather(*list(ocr.tasks));return ocr.get(repo,job['id'],'BCCL')
- job=asyncio.run(run());assert job['status']=='needs_review',job
+ job=asyncio.run(run());assert job['status']=='reviewed',job
  texts=[a for a in job['artifacts'] if a['kind']=='text'];assert texts
  content=(repo.root/job['folder']/texts[0]['name']).read_text();assert '1200' in content and 'PRODUCTION' in content
- assert not ocr.catalog_files(repo,'BCCL',False)
- ocr.approve(repo,job,texts[0]['name'],'reviewer',None)
- files=ocr.catalog_files(repo,'BCCL',False);assert len(files)==1 and files[0]['source_sha256']==job['source_sha256']
+ files=ocr.catalog_files(repo,'BCCL',False);assert {Path(f['relative_path']).suffix for f in files}=={'.csv','.md'} and all(f['source_sha256']==job['source_sha256'] for f in files)
+ markdown=next(f for f in files if f['format']=='md');assert '1200' in (repo.root/markdown['relative_path']).read_text()
  assert ocr.catalog_files(repo,'SECL',False)==[]
  with pytest.raises(HTTPException):ocr.get(repo,job['id'],'SECL')
  with pytest.raises(HTTPException):ocr.artifact_path(repo,job,'../source.png')

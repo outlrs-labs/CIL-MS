@@ -1,6 +1,6 @@
 # CIL Central identity and entity foundation
 
-Current implementation: [Reference UI, reliable ZIP/CSV import and local OCR](../context/19-DESIGN-UPLOAD-OCR.md). Install the backend requirements and local Tesseract engine. In **Data & reports**, use **Document extraction** to review scanned PDFs/screenshots; approved outputs appear in **analytics workbench**. The native workbench keeps its original interface.
+Current implementation: versioned local ZIP ingestion and analysis-time document conversion. Upload preserves PDFs/images without processing them. Selecting one in **Analyse** runs local extraction and adds immutable Markdown and CSV derivatives to the embedded analytics workbench.
 
 First application slice for the hierarchy:
 
@@ -42,19 +42,18 @@ Dependencies are already installed in this workspace.
 
 ## Run locally
 
-Backend:
+Start the complete workspace (web app, CIL API, and the private analytics
+engine) with one supervised command:
 
 ```sh
-./.venv/bin/uvicorn app.main:app --app-dir backend --reload --port 8000
+./.venv/bin/python scripts/dev.py
 ```
 
-Frontend:
-
-```sh
-npm run dev --prefix frontend
-```
-
-Open `http://localhost:5173`. With empty Supabase values, Vite development can show the read-only interface preview; it never authenticates or calls protected APIs. Set `VITE_ENABLE_UI_PREVIEW=false` to hide it.
+Open `http://127.0.0.1:5173`. Stopping the launcher stops all three child
+services, which prevents a stale frontend from reporting an analytics 503.
+With empty Supabase values, Vite development can show the read-only interface
+preview; it never authenticates or calls protected APIs. Set
+`VITE_ENABLE_UI_PREVIEW=false` to hide it.
 
 ## Validate
 
@@ -76,42 +75,40 @@ Account provisioning is deliberately fail-safe: if Auth succeeds but profile cre
 
 Local verification on 2026-09-04: 9 backend tests and 3 frontend/database tests passed; production frontend build passed; dashboard returned HTTP 200 and API health returned `configured: false`. Database tests exercise the migration in embedded PostgreSQL, including RLS isolation, CMPDI visibility, role escalation denial and protected admin constraints. Live Supabase authentication has not been tested because credentials are not configured yet.
 
-After updating `.env`, restart both development servers. Apply the migration before running the administrator bootstrap. Entity seeds create organization records; the administrator creates individual subsidiary/CMPDI accounts from Access & people. Temporary credentials require a password change on first login.
+After updating `.env`, restart the complete workspace. Apply the migration before running the administrator bootstrap. Entity seeds create organization records; the administrator creates individual subsidiary/CMPDI accounts from Access & people. Temporary credentials require a password change on first login.
 
 There is no self-service password recovery screen yet. Administrator recovery should be handled through the project's trusted Supabase operator; do not create a replacement apex account. Before deployment, configure the organization's recovery/MFA/session requirements and test live authentication, password changes and disabled-user access. analytics workbench remains separate for the next integration step.
 
 ## CMPDI local analytics workbench workbench
 
-See [integration handoff](../context/17-LOCAL-ANALYTICS-INTEGRATION.md) for storage, endpoints, permissions, verification and known limits. Sign in as CMPDI and open **Data & reports**. Place existing source files under `../Data/cil/<entity>/<family>/data/`; no upload pipeline is included.
+Repository data now stays inside this checkout under `Data/cil/<entity>/<family>/`, with private snapshots and workspaces under `Data/.processing/`. Sign in and open **Analyse** to select uploaded versions or launch the embedded workbench.
 
-Start from `cil-platform/`, in separate terminals:
+Start from `cil-platform/`:
 
 ```sh
-.venv/bin/python -m uvicorn app.main:app --app-dir backend --host 127.0.0.1 --port 8000
-.venv/bin/python integration/run_data_formulator.py
-npm --prefix frontend run dev -- --host 127.0.0.1
+.venv/bin/python scripts/dev.py
 ```
 
-For a fresh dependency installation, install backend requirements and the sibling package into the same virtualenv:
+For a fresh dependency installation, install backend requirements and the bundled Data Formulator copy into the same virtualenv:
 
 ```sh
 .venv/bin/python -m pip install -r backend/requirements.txt
 .venv/bin/python -m pip install setuptools wheel
-.venv/bin/python -m pip install --no-build-isolation -e ../data-formulator
-npm --prefix ../data-formulator install --legacy-peer-deps --ignore-scripts
-CIL_EMBEDDED=true npm --prefix ../data-formulator run build
+.venv/bin/python -m pip install --no-build-isolation -e data-formulator-main
+npm --prefix data-formulator-main install --legacy-peer-deps --ignore-scripts
+CIL_EMBEDDED=true npm --prefix data-formulator-main run build
 npm --prefix frontend install
 npm --prefix frontend run build
 ```
 
-`--legacy-peer-deps` accommodates the upstream Vega peer-version mismatch. The installed dependency snapshot is in `integration/requirements.lock`; the npm snapshot is `integration/data-formulator.package-lock.json` (copy to the sibling checkout's `package-lock.json` before `npm ci --legacy-peer-deps --ignore-scripts` for exact replay).
+`--legacy-peer-deps` accommodates the upstream Vega peer-version mismatch. The source, backend package, and compiled workbench now resolve from `data-formulator-main/` inside this project.
 
 Set `DF_BRIDGE_SECRET` to a random secret of at least 32 characters, and retain the loopback `DF_URL=http://127.0.0.1:5567`. Keep `.env` private. `CIL_DATA_ROOT`/`CIL_PROCESSING_ROOT` can override storage locations. `WORKBENCH_COOKIE_SECURE=true` is required when deployed over HTTPS; proxy both `/api/cmpdi` and `/cmpdi/workbench` on the frontend origin. This local pilot uses `DF_SANDBOX=local`; harden execution before deployment.
 
-AI credentials can be configured later through **AI providers & models**, including third-party OpenAI-compatible APIs and Ollama. No model credentials are required just to browse sources/open manual charts. Existing optional environment-based provider configuration is also supported by the private runner.
+AI credentials can be configured through **Settings → AI providers & models**, including an explicit Sarvam AI primary, Gemini fallback, third-party OpenAI-compatible APIs, and Ollama. Environment-backed credentials remain server-side: `CIL_PRIMARY_PROVIDER` selects the primary CIL Auto route and `CIL_FALLBACK_PROVIDER` selects its first fallback. No model credential is required to browse sources or open manual charts; the UI reports that AI is not configured instead of failing during workspace load.
 
 
 ## Production subsidiary ZIP workflow
 
-All seven production accounts now have **Data & reports** with ZIP submission, schedule/history, own-data charts/chat and report drafting. CMPDI reviews cross-subsidiary submissions and generated revisions. See [pipeline handoff](../context/18-SUBSIDIARY-INPUT-PIPELINE.md). Same-origin deployment must also proxy `/api/analytics` to FastAPI. No extra credential is needed for upload; AI operations use configured models. Scanned-PDF extraction is the next phase.
-> Latest update: [Reference-led UI, ZIP/CSV compatibility and local OCR](../context/19-DESIGN-UPLOAD-OCR.md). Run `pip install -r backend/requirements.txt` in the project virtualenv and install Tesseract (`brew install tesseract` on macOS). Upload PDFs/images, then open **Data & reports → Document extraction** to review results. Approved CSVs become available in the analytics workbench tab.
+All seven production accounts now have ZIP submission, schedule/history, scoped analytics/chat and report drafting. CMPDI reviews cross-subsidiary submissions and generated revisions. Same-origin deployment must proxy `/api/analytics` to FastAPI. Upload needs no AI credential; PDF/image conversion uses local text extraction when a source is chosen in Analyse, while AI operations use the configured model provider.
+> Document workflow: install Tesseract (`brew install tesseract` on macOS). ZIP upload stores the original package only. OCR starts when a PDF or image is selected in Analyse; Markdown and CSV outputs are then imported into that workbench session.

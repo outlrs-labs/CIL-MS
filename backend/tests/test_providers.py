@@ -1,6 +1,7 @@
 import pytest
 from fastapi import HTTPException
 from app.integration.providers import ProviderInput,validate_provider,cipher,read_providers,public_config
+from app.integration import providers
 import json
 
 def test_provider_credentials_encrypted_and_redacted(tmp_path):
@@ -20,3 +21,14 @@ def test_unsafe_or_invalid_provider_endpoint_rejected(url):
 def test_local_ollama_and_third_party_validation():
  assert validate_provider(ProviderInput(name='Local',endpoint='ollama',models=['test'],api_base='http://localhost:11434'))
  with pytest.raises(HTTPException):validate_provider(ProviderInput(name='Third party',endpoint='compatible',models=['test'],api_key='synthetic'))
+
+def test_sarvam_uses_managed_openai_compatible_endpoint(monkeypatch):
+ saved=[]
+ monkeypatch.setattr(providers,'all_providers',lambda:[])
+ monkeypatch.setattr(providers,'save',lambda items:saved.extend(items))
+ result=providers.add_provider(ProviderInput(name='Sarvam primary',endpoint='sarvam',models=['sarvam-105b'],api_key='synthetic',role='primary'))
+ assert result['kind']=='sarvam'
+ assert result['endpoint']=='openai'
+ assert result['api_base']=='https://api.sarvam.ai/v1'
+ assert 'api_key' not in result
+ assert saved[0]['api_key']=='synthetic'

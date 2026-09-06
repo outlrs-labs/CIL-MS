@@ -21,7 +21,7 @@ The operating subsidiaries are BCCL, CCL, ECL, MCL, NCL, SECL and WCL. CMPDI is 
 
 Every authenticated screen uses a fixed left sidebar, a 56 px top bar and a fluid content area. The header shows the current screen, theme control and identity; the account menu provides Profile, Settings and Sign out.
 
-CMPDI and subsidiary navigation uses `UPLOAD`, `VAULT`, `ALALYSE`, `AUDIT` and `DRAFT`. CIL Admin uses Dashboard, Entity master, Access & people and Settings.
+CMPDI and subsidiary navigation uses Upload, Vault, Analyse, Audit and Submitted Reports. CIL Admin uses Dashboard, Entity master, Access & people and Settings.
 
 ## Screens
 
@@ -41,15 +41,15 @@ Vault is a Finder-style browser over the authorized part of `Data/cil`. It provi
 
 ### ALALYSE
 
-The source browser selects authorized files by subsidiary and family. CSV, XLSX, JSON and Parquet can also be stored directly in the local repository. The active workspace places charts and tables in the main canvas and data chat/report tools at the right. CMPDI can configure supported model providers. Each analysis retains source snapshots and provenance.
+The source browser selects authorized files by subsidiary and family. CSV, XLSX, JSON and Parquet enter the workbench directly. Selecting a PDF or image starts OCR at analysis time and imports the resulting Markdown context and CSV text/table datasets. The active workspace places charts and tables in the main canvas and data chat/report tools at the right. Each analysis retains original-document hashes, derivative snapshots and provenance.
 
 ### AUDIT
 
-Audit handles PDF/image OCR. A user selects a submitted source, runs extraction, compares the page preview and extracted table, corrects a CSV if needed, and approves it. Only reviewed outputs enter Analysis.
+Newly submitted subsidiary reports enter Audit with `pending_review` status. An Assistant Manager or Manager for that subsidiary may approve, await or reject the report, and the author cannot review their own report. Approved reports leave Audit and become available to CMPDI.
 
-### DRAFT
+### SUBMITTED REPORTS
 
-Draft lists generated report revisions. Each analytical draft provides Markdown, a visual PNG, a source manifest, analysis state, chart assets and a complete ZIP. Saving a draft never represents final CIL approval.
+Submitted Reports contains only reports approved through Audit. Before approval, a report must not appear in this screen or in CMPDI's incoming report list. Each approved revision provides Markdown, a visual PNG, a source manifest, analysis state, chart assets and a complete ZIP.
 
 ### Entity master and Access & people
 
@@ -79,8 +79,9 @@ CMPDI families are annual report, land reclamation, geological exploration, hydr
 - Each role sees only its authorized navigation and data scope.
 - A valid ZIP creates an immutable version, source archive and manifest.
 - Vault mirrors the local hierarchy and prevents traversal or cross-entity access.
-- Approved OCR tables are selectable in Analysis.
+- PDFs/images are selectable in Analysis and yield Markdown and/or CSV workbench sources.
 - Analysis supports charts, table inspection, data chat and report drafting.
-- Drafts preserve charts, provenance and revision history.
+- Reports move through Analyse → Audit → Submitted Reports → CMPDI.
+- Assistant Managers and Managers can approve; contributors cannot approve their own or other reports.
+- Submitted reports preserve charts, provenance and revision history.
 - All screens follow `design.md`, work on narrow viewports and avoid unnecessary copy.
-

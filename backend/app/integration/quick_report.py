@@ -13,6 +13,7 @@ from fastapi import HTTPException
 from PIL import Image, ImageDraw, ImageFont
 
 from .repository import PRODUCTION, TECHNICAL, atomic_json
+from .report_templates import load_report_template
 
 PARAMETERS={
  'production_offtake':['Production','Off-take','Dispatch','Stock balance'],
@@ -58,9 +59,9 @@ def _bar(draw,x,y,width,label,value,maximum,color='#0f62fe'):
  draw.rounded_rectangle((x,y+32,x+fill,y+58),4,fill=color)
  draw.text((x+width+16,y+31),f'{value:,.0f}',font=_font(18,True),fill='#262626')
 
-def generate(repo,owner,title,period,target_entity,target_family,entries):
+def generate(repo,owner,title,period,target_entity,target_family,entries,source=None):
  if not entries:raise HTTPException(422,'Select at least one source file.')
- family_name=(TECHNICAL if target_entity=='CMPDI' else PRODUCTION).get(target_family,{}).get('name',target_family.replace('_',' ').title())
+ family_name=({**TECHNICAL,**PRODUCTION} if target_entity=='CMPDI' else PRODUCTION).get(target_family,{}).get('name',target_family.replace('_',' ').title())
  profiles=[];total_bytes=0
  for entry in entries:
   path=(repo.root/entry['relative_path']).resolve()
@@ -72,7 +73,8 @@ def generate(repo,owner,title,period,target_entity,target_family,entries):
  rid=str(uuid4());folder=repo.root/target_entity/target_family/'report_generated'/rid
  if not folder.resolve().is_relative_to(repo.root):raise HTTPException(403,'Unsafe report destination.')
  folder.mkdir(parents=True)
- parameters=PARAMETERS.get(target_family,['Coverage','Source volume','Observed values','Data quality'])
+ template=load_report_template(target_entity,target_family)
+ parameters=template['parameters'] or PARAMETERS.get(target_family,['Coverage','Source volume','Observed values','Data quality'])
  metrics=[('Files combined',len(profiles)),('Subsidiaries',len(set(x['entity'] for x in profiles))),('Rows sampled',sum(x['rows_sampled'] for x in profiles)),('Source size (KB)',round(total_bytes/1024))]
  numeric=[]
  for item in profiles:
@@ -109,10 +111,12 @@ def generate(repo,owner,title,period,target_entity,target_family,entries):
   for label,value in numeric[:3]:_bar(draw,72,y,660,label,abs(value),maximum,'#8a3ffc');y+=82
  draw.text((72,1660),'Analytical draft · Review before CMPDI submission',font=_font(17),fill='#6f6f6f')
  image.save(folder/'report.png','PNG',optimize=True);image.save(folder/'report.pdf','PDF',resolution=150)
- manifest={'id':rid,'title':title,'status':'analytical-draft','created':created,'target_entity':target_entity,'target_family':target_family,'period':period,'sources':[{'id':e['id'],'name':e['name'],'relative_path':e['relative_path']} for e in entries],'parameters':parameters,'generator':'CIL direct report'}
+ manifest={'id':rid,'title':title,'status':template.get('status') or 'analytical-draft','created':created,'target_entity':target_entity,'target_family':target_family,'period':period,'sources':[{'id':e['id'],'name':e['name'],'relative_path':e['relative_path']} for e in entries],'parameters':parameters,'required_sections':template['required_sections'],'visuals':template['visuals'],'review_flow':template['review_flow'],'generator':'CIL direct report','template_schema':1 if template['prompt'] else None}
+ if source:
+  manifest.update({'source_family':source.get('family'),'source_version':source.get('version'),'source_cadence':source.get('cadence'),'source_period':source.get('period')})
  atomic_json(folder/'manifest.json',manifest)
  with zipfile.ZipFile(folder/'report.zip','w',compression=zipfile.ZIP_DEFLATED) as archive:
   for path in folder.iterdir():
    if path.name!='report.zip':archive.write(path,path.name)
  repo.register_report(owner,rid,folder,title)
- return {'id':rid,'title':title,'created':created,'series':rid,'version':1,'previous_id':None,'entity':target_entity,'family':target_family,'audit_status':None}
+ return {'id':rid,'title':title,'created':created,'series':rid,'version':1,'previous_id':None,'entity':target_entity,'family':target_family,'audit_status':None,**({'source_family':source.get('family'),'source_version':source.get('version'),'source_cadence':source.get('cadence'),'source_period':source.get('period')} if source else {})}

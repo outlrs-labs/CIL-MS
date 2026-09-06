@@ -1,4 +1,4 @@
-export function uploadZip(file:File,query:URLSearchParams,token:string,onProgress:(value:number)=>void):Promise<{version:number;period:string;files:{status:string}[];pending_extraction:number}> {
+export function uploadZip(file:File,query:URLSearchParams,token:string,onProgress:(value:number)=>void):Promise<{id:string;version:number;period:string;files:{name:string;status:string}[];pending_extraction:number}> {
  return new Promise((resolve,reject)=>{
   const xhr=new XMLHttpRequest();xhr.open('POST','/api/analytics/submissions?'+query);
   xhr.setRequestHeader('Authorization',`Bearer ${token}`);xhr.setRequestHeader('Content-Type','application/zip');

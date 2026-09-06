@@ -11,6 +11,7 @@ import os
 import shutil
 import time
 import tempfile
+import logging
 from functools import lru_cache
 from pathlib import Path
 from urllib.parse import unquote
@@ -27,7 +28,9 @@ from .repository import Repository, PRODUCTION, TECHNICAL, ENTITIES, OPERATING, 
 from . import submissions,ocr
 from . import vault
 from . import quick_report
+from .report_templates import analyst_instructions
 router=APIRouter()
+logger=logging.getLogger(__name__)
 @lru_cache
 def repository():
  c=settings();r=Repository(c.cil_data_root,c.cil_processing_root);r.initialize();submissions.initialize(r);submissions.publish_schedule(r);return r
@@ -53,16 +56,32 @@ def headers(owner,id):
  if not secret:raise HTTPException(503,'Analytics bridge is not configured.')
  return {'X-CIL-Bridge':secret,'X-CIL-User':owner+'_'+id,'X-Workspace-Id':id}
 async def upstream(owner,id,path,method='GET',payload=None):
- try:
-  async with httpx.AsyncClient(timeout=180) as c:
-   r=await c.request(method,settings().df_url+path,headers=headers(owner,id),json=payload)
+ attempts=3 if method=='GET' else 1
+ for attempt in range(attempts):
+  try:
+   async with httpx.AsyncClient(timeout=180) as c:
+    r=await c.request(method,settings().df_url+path,headers=headers(owner,id),json=payload)
    if r.status_code==422:
-    raise HTTPException(422,r.json().get('error',{}).get('message','Source table could not be imported.'))
-   if not r.is_success:raise HTTPException(503,'The analytics engine could not complete this operation. Check its local service log.')
-   result=r.json()
+    try:detail=r.json().get('error',{}).get('message','Source table could not be imported.')
+    except ValueError:detail='Source table could not be imported.'
+    raise HTTPException(422,detail)
+   if r.status_code in (502,503,504) and attempt+1<attempts:
+    await asyncio.sleep(.2*(attempt+1));continue
+   if not r.is_success:
+    logger.warning('Analytics upstream rejected %s %s with status %s',method,path,r.status_code)
+    if r.status_code==403:raise HTTPException(503,'The analytics bridge needs a restart. Restart the local workspace and try again.')
+    raise HTTPException(503,'The analytics engine is temporarily unavailable. Try again after the workspace finishes starting.')
+   try:result=r.json()
+   except ValueError:
+    logger.warning('Analytics upstream returned a non-JSON response for %s %s',method,path)
+    raise HTTPException(503,'The analytics engine returned an invalid response. Restart the local workspace.') from None
    if result.get('status')=='error':raise HTTPException(422,result.get('error',{}).get('message','Analysis operation failed.'))
    return result.get('data',result)
- except httpx.RequestError:raise HTTPException(503,'The local analytics engine is offline.') from None
+  except httpx.RequestError:
+   if attempt+1<attempts:
+    await asyncio.sleep(.2*(attempt+1));continue
+   logger.warning('Analytics upstream is unreachable for %s %s',method,path)
+ raise HTTPException(503,'The local analytics engine is offline. Start the complete workspace and retry.') from None
 
 class InputSelection(BaseModel):
  model_config=ConfigDict(extra='forbid')
@@ -85,18 +104,40 @@ class AuditSubmission(BaseModel):
  category:str=Field(pattern='^(production_offtake|environmental_compliance|financial|operational_statistics|washery_operations)$')
 class QuickReportInput(AnalysisInput):
  send_for_audit:bool=False
+ # Version-report metadata. When present, the server resolves the complete
+ # version set from the catalog instead of trusting a partial client list.
+ source_family:str|None=None
+ source_cadence:str|None=None
+ source_period:str|None=None
+ source_version:int|None=Field(default=None,ge=1)
 
 jobs:set[asyncio.Task]=set()
 async def import_analysis(value,selection):
  repo=repository()
  try:
-  captured=[];snapshots={}
+  resolved=[];document_context=[];documents=[entry for entry,_ in selection if entry.get('extractable')];document_index=0
   for entry,inp in selection:
+   if entry.get('extractable'):
+    index=document_index;document_index+=1
+    value.update(phase='extracting',current_source=entry['name'],document_index=index+1,document_total=len(documents),progress=round(index/max(len(documents),1)*90));repo.put_analysis(value)
+    def extraction_progress(current):
+     page_progress=max(0,min(100,int(current.get('progress') or 0)))
+     overall=round((index+page_progress/100)/max(len(documents),1)*90)
+     value.update(progress=overall,document_progress=page_progress,current_page=current.get('current_page'),page_count=current.get('page_count'));repo.put_analysis(value)
+    job=await ocr.ensure_for_analysis(repo,entry,value['owner'],extraction_progress)
+    derivatives=[item for item in ocr.catalog_files(repo,entry['entity'],True) if item.get('extraction_id')==job['id'] and item.get('supported')]
+    if not derivatives:raise HTTPException(422,f'No Markdown or CSV data could be extracted from {entry["name"]}.')
+    resolved.extend((item,InputSelection(file_id=item['id'])) for item in derivatives)
+    document_context.append({'source':entry['name'],'extraction_id':job['id'],'outputs':[item['name'] for item in derivatives]})
+   else:resolved.append((entry,inp))
+  value.update(phase='importing',progress=94,document_progress=100,document_context=document_context);repo.put_analysis(value)
+  captured=[];snapshots={}
+  for entry,inp in resolved:
    if entry['id'] not in snapshots:snapshots[entry['id']]=await asyncio.to_thread(repo.snapshot,entry,value['id'])
    captured.append({**snapshots[entry['id']],'sheet':inp.sheet})
   value['sources']=captured;repo.put_analysis(value)
   data=await upstream(value['owner'],value['id'],'/cil/import','POST',{'sources':captured,'title':value['title'],'period':value['period']})
-  value.update(status='ready',tables=data['tables'],error=None)
+  value.update(status='ready',phase='ready',progress=100,current_source=None,tables=data['tables'],error=None)
  except asyncio.CancelledError:
   value.update(status='failed',error='Import interrupted by a server restart. Create a new analysis.')
   raise
@@ -133,8 +174,10 @@ async def session_source(request:Request,entity:str=Query(max_length=16),family:
  return {'id':hashlib.sha256(fingerprint.encode()).hexdigest(),'entity':entity,'family':family,'name':filename,'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':True,'session_upload':True}
 @router.get('/api/cmpdi/status')
 async def status(p:Principal=Depends(analyst)):
- try:return {'online':True,**await upstream(p.id,'status','/cil/health')}
- except HTTPException:return {'online':False,'models':[]}
+ try:
+  value=await upstream(p.id,'status','/cil/health')
+  return {'online':True,'model_ready':bool(value.get('models')),**value}
+ except HTTPException as exc:return {'online':False,'model_ready':False,'models':[],'message':exc.detail}
 @router.post('/api/cmpdi/analyses',status_code=202)
 async def create_analysis(data:AnalysisInput,p:Principal=Depends(analyst)):
  repo=repository();items={e['id']:e for e in (await asyncio.to_thread(submissions.versioned_catalog,repo,entity_scope(p),True))['files']}
@@ -146,7 +189,7 @@ async def create_analysis(data:AnalysisInput,p:Principal=Depends(analyst)):
  selected=[];seen=set();versions={}
  for inp in data.inputs:
   entry=items.get(inp.file_id)
-  if not entry or not entry['supported']:raise HTTPException(422,'A selected input is missing, changed or unsupported. Refresh the catalog.')
+  if not entry or not (entry.get('supported') or entry.get('extractable')):raise HTTPException(422,'A selected input is missing, changed or unsupported. Refresh the catalog.')
   if entry['entity'] not in data.scope_entities:raise HTTPException(422,'Selected file is outside the requested subsidiary scope.')
   if entry.get('submission_id'):
    group=(entry['entity'],entry['family'],entry['cadence'],entry['period'])
@@ -156,7 +199,7 @@ async def create_analysis(data:AnalysisInput,p:Principal=Depends(analyst)):
   if key in seen:raise HTTPException(422,'Duplicate file/sheet selection.')
   seen.add(key);selected.append((entry,inp))
  await upstream(p.id,'status','/cil/health')
- value={'id':str(uuid4()),'owner':p.id,'title':data.title,'period':data.period,'target_entity':data.target_entity,'target_family':data.target_family,'scope_entities':data.scope_entities,'missing_entities':sorted(set(data.scope_entities)-{e['entity'] for e,_ in selected}),'created':time.time(),'status':'importing','sources':[],'tables':[]}
+ value={'id':str(uuid4()),'owner':p.id,'title':data.title,'period':data.period,'target_entity':data.target_entity,'target_family':data.target_family,'scope_entities':data.scope_entities,'missing_entities':sorted(set(data.scope_entities)-{e['entity'] for e,_ in selected}),'created':time.time(),'status':'importing','phase':'queued','progress':0,'sources':[],'document_context':[],'tables':[]}
  repo.put_analysis(value)
  task=asyncio.create_task(import_analysis(value,selected));jobs.add(task);task.add_done_callback(jobs.discard)
  return value
@@ -167,7 +210,9 @@ async def analyses(p:Principal=Depends(analyst)):
 @router.get('/api/cmpdi/analyses/{id}')
 async def analysis(id:UUID,p:Principal=Depends(analyst)):return owned_analysis(str(id),p)
 
-# Process-memory sessions intentionally expire across backend restarts; no bearer tokens written to disk.
+# Workbench credentials stay in memory so bearer tokens are never written to disk.
+# The portal renews this cookie in the background while an analysis is active.
+WORKBENCH_SESSION_SECONDS=8*60*60
 sessions={}
 @router.post('/api/cmpdi/analyses/{id}/workbench-session')
 async def open_workbench(id:UUID,response:Response,p:Principal=Depends(analyst)):
@@ -175,10 +220,10 @@ async def open_workbench(id:UUID,response:Response,p:Principal=Depends(analyst))
  if a['status']!='ready':raise HTTPException(409,'Analysis is not ready.')
  for key,value in list(sessions.items()):
   if value['expires']<time.time():sessions.pop(key,None)
- key=secrets.token_urlsafe(32);sessions[hashlib.sha256(key.encode()).hexdigest()]={'token':p.token,'owner':p.id,'analysis':str(id),'expires':time.time()+1800}
+ key=secrets.token_urlsafe(32);sessions[hashlib.sha256(key.encode()).hexdigest()]={'token':p.token,'owner':p.id,'analysis':str(id),'expires':time.time()+WORKBENCH_SESSION_SECONDS}
  base=f'/cmpdi/workbench/{id}/'
- response.set_cookie('cil_workbench',key,max_age=1800,httponly=True,secure=settings().workbench_cookie_secure,samesite='strict',path=base)
- return {'url':base,'expires_in':1800}
+ response.set_cookie('cil_workbench',key,max_age=WORKBENCH_SESSION_SECONDS,httponly=True,secure=settings().workbench_cookie_secure,samesite='strict',path=base)
+ return {'url':base,'expires_in':WORKBENCH_SESSION_SECONDS}
 
 async def bounded_body(request:Request,limit:int):
  chunks=[];size=0
@@ -189,8 +234,10 @@ async def bounded_body(request:Request,limit:int):
  return b''.join(chunks)
 
 async def workbench_principal(request:Request,id:UUID):
- key=request.cookies.get('cil_workbench','');s=sessions.get(hashlib.sha256(key.encode()).hexdigest())
- if not s or s['expires']<time.time() or s['analysis']!=str(id):raise HTTPException(401,'Reopen this analysis from your portal to renew the workbench session.')
+ key=request.cookies.get('cil_workbench','');session_key=hashlib.sha256(key.encode()).hexdigest();s=sessions.get(session_key)
+ if not s or s['expires']<time.time() or s['analysis']!=str(id):
+  sessions.pop(session_key,None)
+  raise HTTPException(401,'Reopen this analysis from your portal to renew the workbench session.')
  if request.method not in ('GET','HEAD'):
   origin=request.headers.get('origin')
   if origin not in settings().origins:raise HTTPException(403,'Untrusted workbench origin.')
@@ -198,6 +245,7 @@ async def workbench_principal(request:Request,id:UUID):
  p=await member(p);await analyst(p)
  if p.id!=s['owner']:raise HTTPException(403,'Invalid workbench identity.')
  owned_analysis(str(id),p)
+ s['expires']=time.time()+WORKBENCH_SESSION_SECONDS
  return p
 
 # Intentionally narrow; no connector, file upload, credential, local desktop, reset, migration or arbitrary SQL endpoints.
@@ -208,7 +256,7 @@ WRITE={'api/sessions/load','api/sessions/save','api/sessions/update-meta','api/t
 async def workbench(id:UUID,path:str,request:Request):
  p=await workbench_principal(request,id);sid=str(id);repo=repository();a=owned_analysis(sid,p)
  if path=='cil/save-report' and request.method=='POST':return await save_report(request,p,a)
- if path=='cil/context' and request.method=='GET':return {'id':sid,'title':a['title'],'period':a['period'],'sources':a['sources']}
+ if path=='cil/context' and request.method=='GET':return {'id':sid,'title':a['title'],'period':a['period'],'target_entity':a['target_entity'],'target_family':a['target_family'],'sources':a['sources']}
  if path=='api/connectors' and request.method=='GET':return {'status':'ok','data':{'connectors':[]}}
  if path.startswith('api/'):
   allowed=READ if request.method=='GET' else WRITE
@@ -222,7 +270,7 @@ async def workbench(id:UUID,path:str,request:Request):
     if payload.get('id',sid)!=sid:raise HTTPException(403,'Workspace mismatch.')
     payload['id']=sid
    if path=='api/agent/analyst-streaming':
-    payload['agent_exploration_rules']='Use ONLY the selected workspace tables. Sources are unvalidated local data. Disclose missing data and uncertainty. Never sum daily records together with monthly summaries. Compute numerical facts on full tables; do not infer totals from samples. Include units and periods. Report scope: '+json.dumps({'period':a['period'],'entities':a['scope_entities'],'missing':a['missing_entities']})
+    payload['agent_exploration_rules']='Use ONLY the selected workspace tables. Sources are unvalidated local data. Disclose missing data and uncertainty. Never sum daily records together with monthly summaries. Compute numerical facts on full tables; do not infer totals from samples. Include units and periods. Report scope: '+json.dumps({'period':a['period'],'entities':a['scope_entities'],'missing':a['missing_entities']})+analyst_instructions(a['target_entity'],a['target_family'])
   params=dict(request.query_params)
   if path=='api/sessions/list':params={}
   client=httpx.AsyncClient(timeout=httpx.Timeout(240,connect=10))
@@ -237,12 +285,15 @@ async def workbench(id:UUID,path:str,request:Request):
    finally:await result.aclose();await client.aclose()
   return StreamingResponse(stream(),status_code=result.status_code,media_type=result.headers.get('content-type','application/json'),headers={'Cache-Control':'no-store','X-Accel-Buffering':'no'})
  # Static bundle and SPA. Assets contain no source data but still require the workbench session.
- dist=Path(__file__).resolve().parents[4]/'data-formulator'/'py-src'/'data_formulator'/'dist'
+ dist=Path(__file__).resolve().parents[3]/'data-formulator-main'/'py-src'/'data_formulator'/'dist'
  if not path or path in ('app','about'):
   index=dist/'index.html'
   if not index.exists():raise HTTPException(503,'Build the analytics frontend first.')
-  text=index.read_text().replace('src="./',f'src="/cmpdi/workbench/{id}/').replace('href="./',f'href="/cmpdi/workbench/{id}/')
-  text=text.replace('href="/favicon.ico"',f'href="/cmpdi/workbench/{id}/favicon.ico"')
+  base=f'/cmpdi/workbench/{id}/'
+  text=index.read_text().replace('src="./',f'src="{base}').replace('href="./',f'href="{base}')
+  # Embedded builds normally emit relative URLs, but keep the secured proxy
+  # compatible with an accidental root-base build as well.
+  text=re.sub(r'(src|href)="/(?!cmpdi/workbench/)',lambda match:f'{match.group(1)}="{base}',text)
   return HTMLResponse(text,headers={'Content-Security-Policy':"frame-ancestors 'self'",'Cache-Control':'no-store'})
  file=(dist/path).resolve()
  if not file.is_relative_to(dist.resolve()) or not file.is_file():raise HTTPException(404,'Asset not found.')
@@ -301,7 +352,10 @@ async def _save_report(request,p,a):
    except OSError:shutil.copy2(file,destination)
  atomic_json(repo.root/a['target_entity']/'report'/(rid+'.json'),{'id':rid,'title':title,'relative_path':folder.relative_to(repo.root).as_posix()})
  repo.register_report(p.id,rid,folder,title,revision)
- return {'id':rid,'relative_path':folder.relative_to(repo.root).as_posix(),**revision}
+ audit_status=None
+ if data.get('send_for_audit') and a['target_entity'] in OPERATING:
+  audit_status=repo.submit_audit(rid,p.id,a['target_entity'],a['target_family'])['status']
+ return {'id':rid,'relative_path':folder.relative_to(repo.root).as_posix(),'audit_status':audit_status,**revision}
 
 @router.get('/api/cmpdi/reports')
 async def reports(p:Principal=Depends(analyst)):
@@ -309,7 +363,7 @@ async def reports(p:Principal=Depends(analyst)):
  for r in repo.reports(None):
   relative=repo.report_path(r['id'],None).relative_to(repo.root)
   entity=relative.parts[0];audit_item=audits.get(r['id'],{});audit_status=audit_item.get('status');report_family=audit_item.get('category') or relative.parts[1]
-  if p.profile['role']=='subsidiary':visible=entity==code
+  if p.profile['role']=='subsidiary':visible=entity==code and audit_status=='submitted_to_cmpdi'
   else:visible=audit_status=='submitted_to_cmpdi' or (r['owner']==p.id and (entity=='CMPDI' or audit_status in (None,'rejected')))
   if visible:
    public={key:value for key,value in r.items() if key!='owner'}
@@ -320,16 +374,29 @@ async def generate_report(data:QuickReportInput,p:Principal=Depends(analyst)):
  repo=repository();catalog=(await asyncio.to_thread(submissions.versioned_catalog,repo,entity_scope(p),True))['files'];items={e['id']:e for e in catalog}
  code=entity_scope(p)
  if code and (data.target_entity!=code or set(data.scope_entities)!={code}):raise HTTPException(403,'Select only your own subsidiary and report destination.')
- families=TECHNICAL if data.target_entity=='CMPDI' else PRODUCTION
+ # CMPDI can produce a consolidated report for any operating report family;
+ # technical families remain available for CMPDI-owned source data.
+ families={**TECHNICAL,**PRODUCTION} if data.target_entity=='CMPDI' else PRODUCTION
  if data.target_entity not in ENTITIES or data.target_family not in families:raise HTTPException(422,'Choose a valid report destination.')
  selected=[];seen=set()
- for choice in data.inputs:
-  entry=items.get(choice.file_id)
-  if not entry or not entry['supported']:raise HTTPException(422,'A selected source is missing or unsupported. Refresh the data list.')
-  if entry['entity'] not in data.scope_entities:raise HTTPException(422,'A selected source is outside the requested scope.')
-  if entry['id'] in seen:raise HTTPException(422,'Select each source once.')
-  seen.add(entry['id']);selected.append(entry)
- result=await asyncio.to_thread(quick_report.generate,repo,p.id,data.title,data.period,data.target_entity,data.target_family,selected)
+ if data.source_version is not None:
+  if not data.source_family:raise HTTPException(422,'Choose a report family for the selected version.')
+  if data.source_family not in ({**TECHNICAL,**PRODUCTION}):raise HTTPException(422,'Choose a valid source report family.')
+  selected=[entry for entry in catalog if entry.get('supported') and entry.get('family')==data.source_family and entry.get('version')==data.source_version and (not data.source_cadence or entry.get('cadence')==data.source_cadence) and (not data.source_period or entry.get('period')==data.source_period) and entry.get('entity') in data.scope_entities]
+  if not selected:raise HTTPException(422,'No supported files were found for that report version. Refresh the catalog and choose another version.')
+ else:
+  for choice in data.inputs:
+   entry=items.get(choice.file_id)
+   if not entry or not entry['supported']:raise HTTPException(422,'A selected source is missing or unsupported. Refresh the data list.')
+   if entry['entity'] not in data.scope_entities:raise HTTPException(422,'A selected source is outside the requested scope.')
+   if entry['id'] in seen:raise HTTPException(422,'Select each source once.')
+   seen.add(entry['id']);selected.append(entry)
+ source={'family':data.source_family,'version':data.source_version,'cadence':data.source_cadence,'period':data.source_period} if data.source_version is not None else None
+ result=await asyncio.to_thread(quick_report.generate,repo,p.id,data.title,data.period,data.target_entity,data.target_family,selected,source)
+ result['source_family']=data.source_family
+ result['source_version']=data.source_version
+ result['source_cadence']=data.source_cadence
+ result['source_period']=data.source_period
  result['can_submit']=data.target_entity in OPERATING
  if data.send_for_audit:
   result['audit_status']=(await asyncio.to_thread(repo.submit_audit,result['id'],p.id,data.target_entity,data.target_family))['status']
@@ -356,12 +423,13 @@ async def submit_report_audit(id:UUID,data:AuditSubmission,p:Principal=Depends(a
 @router.get('/api/cmpdi/audits')
 async def audit_queue(p:Principal=Depends(analyst)):
  if p.profile['role']=='cmpdi':return []
- return await asyncio.to_thread(repository().audits,entity_scope(p))
+ items=await asyncio.to_thread(repository().audits,entity_scope(p))
+ return [item for item in items if item['status'] not in ('submitted_to_cmpdi','approved')]
 
 @router.post('/api/cmpdi/audits/{id}/decision')
 async def audit_decision(id:UUID,data:AuditDecision,p:Principal=Depends(analyst)):
- if p.profile['role']!='subsidiary' or p.profile.get('review_position','contributor')!='manager':raise HTTPException(403,'Only the subsidiary manager can review audit requests.')
- position='manager'
+ position=p.profile.get('review_position','contributor')
+ if p.profile['role']!='subsidiary' or position not in ('assistant_manager','manager'):raise HTTPException(403,'Only an assistant manager or manager can review audit requests.')
  item=repository().audit(str(id));scope=entity_scope(p)
  if not scope or item['entity']!=scope:raise HTTPException(404,'Audit item not found.')
  return await asyncio.to_thread(repository().decide_audit,str(id),p.id,position,data.decision,data.comment)
@@ -403,8 +471,8 @@ async def submission_history(p:Principal=Depends(analyst)):
    if job:
     file['extraction_status']=job['status']
     file['status']=job['status']
-  item['pending_extraction']=sum(f['status'] in ('pending_extraction','queued','running','failed') for f in item['files'])
-  item['needs_review']=sum(f['status'] in ('needs_review','partial') for f in item['files'])
+  item['pending_extraction']=sum(f['status'] in ('pending_extraction','queued','running') for f in item['files'])
+  item['extraction_issues']=sum(f['status'] in ('failed','partial') for f in item['files'])
  return items
 
 @router.get('/api/analytics/schedules')
@@ -477,8 +545,6 @@ async def upload_submission(request:Request,family:str,cadence:str,period:str,en
    task=asyncio.create_task(asyncio.to_thread(submissions.ingest,repo,Path(name),code,p.id,family,cadence,period))
    try:
     result=await asyncio.shield(task)
-    for entry in result['files']:
-     if entry['status']=='pending_extraction':ocr.enqueue(repo,result['id'],entry['name'],p.id,code)
     return result
    except asyncio.CancelledError:
     await task

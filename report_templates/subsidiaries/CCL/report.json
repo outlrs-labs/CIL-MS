@@ -1,0 +1,15 @@
+{
+  "schema_version": 1,
+  "subsidiary": "CCL",
+  "status": "analytical-draft",
+  "required_sections": ["Executive summary", "Key indicators", "Trend and variance", "Exceptions and risks", "Recommended actions", "Source register"],
+  "default_visuals": ["coverage summary", "period trend", "variance comparison"],
+  "review_flow": {"first": "assistant_manager", "final": "manager", "destination": "CMPDI"},
+  "families": {
+    "production_offtake": {"parameters": ["Production", "Off-take", "Dispatch", "Stock balance"]},
+    "environmental_compliance": {"parameters": ["Compliance status", "Clearance conditions", "Monitoring coverage", "Exceptions"]},
+    "financial": {"parameters": ["Revenue", "Operating cost", "Variance", "Period trend"]},
+    "operational_statistics": {"parameters": ["Output", "Productivity", "Availability", "Operational variance"]},
+    "washery_operations": {"parameters": ["Raw coal feed", "Washed output", "Yield", "Plant utilisation"]}
+  }
+}

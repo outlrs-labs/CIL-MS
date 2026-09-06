@@ -3,7 +3,7 @@ import {MessageSquare,LayoutDashboard,CalendarCheck,Search,ClipboardCheck,FilePe
 import type {Identity} from './types';
 export type ToolView='inputs'|'vault'|'analysis'|'extraction'|'reports';
 export type SettingsSection='overview'|'profile'|'security'|'appearance'|'models';
-const tools=[{id:'inputs',label:'Upload',icon:LayoutDashboard},{id:'vault',label:'Vault',icon:CalendarCheck},{id:'analysis',label:'Analyse',icon:Search},{id:'extraction',label:'Audit',icon:ClipboardCheck},{id:'reports',label:'Submission',icon:FilePenLine}] as const;
+const tools=[{id:'inputs',label:'Upload',icon:LayoutDashboard},{id:'vault',label:'Vault',icon:CalendarCheck},{id:'analysis',label:'Analyse',icon:Search},{id:'extraction',label:'Audit',icon:ClipboardCheck},{id:'reports',label:'Submitted Reports',icon:FilePenLine}] as const;
 export function WorkspaceBrand(){return <div className="workspace-brand"><span aria-hidden="true"/><strong>CIL MAGMENT SOFTWARE</strong></div>;}
 export function WorkspaceSidebar({identity,page,view,onPage,onTool,onProfile,onSignout,mobile,onClose}:{identity:Identity;page:string;view:ToolView;onPage:(page:string)=>void;onTool:(view:ToolView)=>void;onProfile:()=>void;onSignout:()=>void;mobile:boolean;onClose:()=>void}){
  const [menu,setMenu]=useState(false);const account=useRef<HTMLDivElement>(null);const admin=identity.profile.role==='cil_admin';

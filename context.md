@@ -30,7 +30,7 @@ Data/cil/
 └── report/                       # entity-wide report library
 ```
 
-Each family starts with `data/` and `report_generated/`. `submissions/` appears after the first ZIP submission and `extractions/` after the first OCR job.
+Each family starts with `data/` and `report_generated/`. `submissions/` appears after the first ZIP submission. `extractions/` appears only when a user selects a PDF/image in Analyse.
 
 ### CMPDI
 
@@ -75,10 +75,12 @@ Supported structured formats are CSV, XLSX, JSON and Parquet.
 ├── page-<n>.*
 ├── *.csv
 ├── reviewed-*.csv
+├── document.md
+├── reviewed-document.md
 └── review.json
 ```
 
-PDF, PNG, JPG/JPEG and TIF/TIFF sources remain in their immutable submission. AUDIT owns extraction review. Only approved `reviewed-*.csv` artifacts enter the analysis catalog. Source hashes prevent an older job from approving changed input.
+PDF, PNG, JPG/JPEG and TIF/TIFF sources remain in their immutable submission. Upload never starts OCR. Analyse starts or reuses a source-hash-matched extraction only after the document is selected. Published derivatives are restricted to Markdown and CSV; both are snapshotted and loaded as workbench tables. Page PNGs are internal previews, not analytical outputs.
 
 ## Generated reports
 
@@ -104,10 +106,18 @@ The same revision is hard-linked or copied into `<ENTITY>/report/<REPORT_UUID>/`
 - Vault is read-only and downloads require authentication.
 - Hidden files, symlinks, traversal segments, backslashes and null bytes are rejected.
 - Browsable family children are `data`, `report_generated` and `submissions`; entity-level `report` is allowed.
-- `extractions` is backend-managed and reached through AUDIT so raw OCR output is not confused with approved data.
+- `extractions` is backend-managed and created on demand from Analyse; Vault continues to present the immutable submitted source.
 - Search/filter supports type, updated time and sort order.
 
 Never edit an earlier version in place, analyse an organizational original without a snapshot, store secrets in `Data/cil`, or let the frontend construct arbitrary filesystem paths. Keep every generated report inside its target entity/family and preserve its source manifest.
+
+## Workbench session continuity
+
+The selected analysis is remembered in browser `sessionStorage` under an entity-scoped key. On a portal refresh, only that exact ready analysis is restored; the latest analysis is never opened implicitly. The workbench iframe stays mounted while the user visits Upload, Vault, Audit or Submitted Reports, so its in-memory Data Formulator state is preserved. Its short-lived bridge credential is kept only in backend memory, issued as an HttpOnly cookie scoped to the analysis path, and renewed silently every five minutes and when the portal becomes visible. A backend restart or expired response is recovered by renewing the same analysis session and reloading only that workbench frame.
+
+## Report approval workflow
+
+A generated subsidiary report is registered as an immutable revision and enters Audit as `pending_review`. It is not returned by the Submitted Reports API at this stage. An Assistant Manager or Manager assigned to the same subsidiary can approve, await or reject it; the author cannot audit their own report. Approval changes the state to `submitted_to_cmpdi`, removes it from the open Audit queue and makes it visible in both the subsidiary's Submitted Reports screen and CMPDI's incoming report list.
 
 ## Code map
 
@@ -121,5 +131,4 @@ Never edit an earlier version in place, analyse an organizational original witho
 | Upload / Version Control UI | `frontend/src/SubmissionWorkspace.tsx` |
 | Vault UI | `frontend/src/VaultWorkspace.tsx` |
 | Analysis UI | `frontend/src/AnalyticsWorkspace.tsx` |
-| OCR review UI | `frontend/src/ExtractionWorkspace.tsx` |
-
+| Analysis-time OCR orchestration | `backend/app/integration/api.py`, `backend/app/integration/ocr.py` |

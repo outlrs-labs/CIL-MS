@@ -16,6 +16,15 @@ def write_csv(folder,name,headers,rows,artifacts,kind):
         writer=csv.writer(f);writer.writerow(headers);writer.writerows(rows)
     artifacts.append({'name':name,'kind':kind,'rows':len(rows),'approved':False})
 
+def write_markdown(folder,pages,artifacts):
+    if not pages:return
+    name='document.md'
+    content=['# Extracted document','']
+    for page,lines in pages:
+        content.extend((f'## Page {page}','',*lines,''))
+    (folder/name).write_text('\n'.join(content).strip()+'\n',encoding='utf8')
+    artifacts.append({'name':name,'kind':'markdown','rows':sum(len(lines) for _,lines in pages),'approved':False})
+
 def recognize(image_path):
     binary=ocr.engine()
     if not binary:raise RuntimeError('Tesseract is not installed. Install it on the backend host and retry.')
@@ -53,9 +62,9 @@ def extract(repo,id):
             pdf=pdfplumber.open(source);renderer=pdfium.PdfDocument(source);count=len(pdf.pages)
         else:image=Image.open(source);count=getattr(image,'n_frames',1)
         if count>100:raise RuntimeError('Document exceeds the current 100-page extraction limit. Split it into smaller documents.')
-        job['page_count']=count;job['engine']='Tesseract English + PDF text/table extraction';ocr.save(repo,job)
+        job['page_count']=count;job['engine']='Tesseract English + PDF text/table extraction';job['phase']='running_ocr';job['progress']=0;ocr.save(repo,job);markdown_pages=[]
         for index in range(count):
-            page_no=index+1;preview=f'page-{page_no}.png';words=[];tables=[];method='ocr'
+            page_no=index+1;preview=f'page-{page_no}.png';words=[];tables=[];method='ocr';job['current_page']=page_no;job['phase']='running_ocr';ocr.save(repo,job)
             try:
                 if pdf:
                     page=pdf.pages[index];page_image=renderer[index]
@@ -84,6 +93,7 @@ def extract(repo,id):
                         current+=(' ' if current else '')+w['text'];edge=w['x']+w['w']
                     cells.append(current)
                     if len(cells)>1:candidate_rows.append((number,cells,confidence))
+                if line_rows:markdown_pages.append((page_no,[row[3] for row in line_rows]))
                 write_csv(folder,f'page-{page_no}-text.csv',['source_file','page','line','text','ocr_confidence','method','source_sha256'],line_rows,job['artifacts'],'text')
                 write_csv(folder,f'page-{page_no}-words.csv',['text','left','top','width','height','ocr_confidence'],[[w['text'],w['x'],w['y'],w['w'],w['h'],w['confidence']] for w in words],job['artifacts'],'word_positions')
                 if tables:
@@ -99,14 +109,17 @@ def extract(repo,id):
                     rows=[[job['filename'],page_no,num,*cells,*['']*(width-len(cells)),conf] for num,cells,conf in (candidate_rows[1:] if headings else candidate_rows)]
                     write_csv(folder,f'page-{page_no}-table-1.csv',['source_file','page','source_line']+(headings or [f'column_{i+1}' for i in range(width)])+['ocr_confidence'],rows,job['artifacts'],'table_candidate')
                 scores=[w['confidence'] for w in words if w['confidence'] is not None]
-                job['pages'].append({'page':page_no,'preview':preview,'method':method,'words':len(words),'confidence':round(statistics.mean(scores),1) if scores else None,'status':'needs_review' if words else 'no_text'})
+                job['pages'].append({'page':page_no,'preview':preview,'method':method,'words':len(words),'confidence':round(statistics.mean(scores),1) if scores else None,'status':'extracted' if words else 'no_text'})
             except Exception as exc:
                 job['pages'].append({'page':page_no,'preview':preview if (folder/preview).exists() else None,'status':'failed','error':str(exc)[:250]})
-            ocr.save(repo,job)
+            job['progress']=round(page_no/count*100);ocr.save(repo,job)
+        write_markdown(folder,markdown_pages,job['artifacts'])
         failures=any(p['status'] in ('failed','no_text') for p in job['pages'])
-        job['status']=('partial' if failures else 'needs_review') if job['artifacts'] else 'failed'
+        job['status']=('partial' if failures else 'reviewed') if job['artifacts'] else 'failed'
         if job['artifacts']:job['error']=None
         if not job['artifacts']:job['error']='No text could be extracted. Review page errors and source quality.'
+        if job['artifacts']:ocr.auto_approve(repo,job)
+        else:job['phase']='failed';job['progress']=100
         atomic_json(folder/'extraction.json',job);ocr.save(repo,job)
     finally:
         if image:image.close()
@@ -117,4 +130,4 @@ if __name__=='__main__':
     repo=Repository(Path(sys.argv[1]),Path(sys.argv[2]));id=sys.argv[3]
     try:extract(repo,id)
     except Exception as exc:
-        job=ocr.get(repo,id);job.update(status='failed',error=str(exc)[:350]);ocr.save(repo,job)
+        job=ocr.get(repo,id);job.update(status='failed',phase='failed',progress=100,error=str(exc)[:350]);ocr.save(repo,job)

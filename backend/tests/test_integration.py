@@ -1,6 +1,7 @@
 import asyncio
 import hashlib
 import json
+import re
 from pathlib import Path
 from uuid import uuid4
 import pytest
@@ -64,18 +65,49 @@ def test_direct_analysis_file_is_persisted_and_catalogued(repo):
   assert any(entry['id']==item['id'] for entry in files)
   assert c.post('/api/analytics/session-source?entity=BCCL&family=production_offtake&name=notes.exe',content=b'bad').status_code==422
 
+def test_analysis_time_ocr_imports_markdown_and_csv_derivatives(repo,monkeypatch):
+ from unittest.mock import AsyncMock
+ folder=repo.root/'BCCL/production_offtake/extractions/job-1';folder.mkdir(parents=True)
+ markdown=folder/'reviewed-document.md';markdown.write_text('# Page 1\n\nProduction was 42 tonnes.\n')
+ table=folder/'reviewed-page-1-table-1.csv';table.write_text('mine,tonnes\nA,42\n')
+ def entry(path,format):
+  relative=path.relative_to(repo.root).as_posix();stat=path.stat()
+  return {'id':hashlib.sha256(f'{relative}:{stat.st_size}:{stat.st_mtime_ns}'.encode()).hexdigest(),'entity':'BCCL','family':'production_offtake','name':'scan.pdf · '+path.name.removeprefix('reviewed-'),'relative_path':relative,'bytes':stat.st_size,'modified':stat.st_mtime,'supported':True,'extractable':False,'format':format,'submission_id':'submission-1','version':1,'cadence':'monthly','period':'2026-09','is_latest':True,'extraction_id':'job-1'}
+ derivatives=[entry(markdown,'md'),entry(table,'csv')]
+ monkeypatch.setattr(api.ocr,'ensure_for_analysis',AsyncMock(return_value={'id':'job-1'}))
+ monkeypatch.setattr(api.ocr,'catalog_files',lambda *_:derivatives)
+ upstream=AsyncMock(return_value={'tables':[{'id':'markdown-context'},{'id':'table-data'}]})
+ monkeypatch.setattr(api,'upstream',upstream)
+ original={'id':'pdf-id','entity':'BCCL','family':'production_offtake','name':'scan.pdf','relative_path':'BCCL/production_offtake/data/versions/monthly/2026-09/submission-1/scan.pdf','bytes':10,'modified':1,'supported':False,'extractable':True,'format':'pdf','submission_id':'submission-1','version':1,'cadence':'monthly','period':'2026-09','is_latest':True,'sha256':'source-hash'}
+ value={'id':str(uuid4()),'owner':'test-user','title':'Scanned report','period':'2026-09','target_entity':'BCCL','target_family':'production_offtake','scope_entities':['BCCL'],'missing_entities':[],'created':1,'status':'importing','phase':'queued','sources':[],'tables':[]}
+ asyncio.run(api.import_analysis(value,[(original,api.InputSelection(file_id='pdf-id'))]))
+ saved=repo.get_analysis(value['id'],'test-user')
+ assert saved['status']=='ready' and {Path(item['snapshot']).suffix for item in saved['sources']}=={'.md','.csv'}
+ assert saved['document_context'][0]['source']=='scan.pdf'
+ assert {Path(item['snapshot']).suffix for item in upstream.await_args.args[4]['sources']}=={'.md','.csv'}
+
 def test_workbench_requires_session(repo):
  with TestClient(app) as c:assert c.get('/cmpdi/workbench/'+str(uuid4())+'/api/app-config').status_code==401
 
-def test_cookie_is_httponly_and_bound_to_analysis(repo):
+def test_cookie_is_httponly_and_bound_to_analysis(repo,monkeypatch):
  app.dependency_overrides[principal]=lambda:as_role('cmpdi')
  id=str(uuid4());repo.put_analysis({'id':id,'owner':'test-user','status':'ready'})
  with TestClient(app) as c:
   r=c.post('/api/cmpdi/analyses/'+id+'/workbench-session')
   assert r.status_code==200
+  assert r.json()['expires_in']==api.WORKBENCH_SESSION_SECONDS
+  assert f'Max-Age={api.WORKBENCH_SESSION_SECONDS}' in r.headers['set-cookie']
   assert 'HttpOnly' in r.headers['set-cookie']
   assert 'SameSite=strict' in r.headers['set-cookie']
   assert c.get('/cmpdi/workbench/'+str(uuid4())+'/api/app-config').status_code==401
+  base=f'/cmpdi/workbench/{id}/'
+  from unittest.mock import AsyncMock
+  monkeypatch.setattr(api,'workbench_principal',AsyncMock(return_value=as_role('cmpdi')))
+  page=c.get(base)
+  assert page.status_code==200
+  entry=re.search(r'<script[^>]+src="([^"]+\.js)"',page.text)
+  assert entry and entry.group(1).startswith(base)
+  assert c.get(entry.group(1)).status_code==200
 
 def test_report_artifacts_and_library_preserve_provenance(repo,monkeypatch):
  import base64,zipfile
@@ -123,19 +155,30 @@ def test_direct_report_can_be_generated_and_sent_through_simple_audit(repo):
   queue=c.get('/api/analytics/audits').json()
   assert [item['report_id'] for item in queue]==[report['id']]
   assert queue[0]['category']=='financial' and queue[0]['version']==1
-  forbidden=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'approve','comment':'Checked'})
-  assert forbidden.status_code==403
+  assert c.get('/api/analytics/reports').json()==[]
+  reviewed=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'await','comment':'Confirm units'})
+  assert reviewed.status_code==200 and reviewed.json()['status']=='awaiting'
   reviewer=Principal('reviewer','token',{'id':'reviewer','role':'subsidiary','review_position':'manager','active':True,'must_change_password':False},{'id':'entity','code':'BCCL','kind':'operating','active':True})
   app.dependency_overrides[principal]=lambda:reviewer
   pdf=c.get(f"/api/analytics/reports/{report['id']}/report.pdf")
   assert pdf.status_code==200 and pdf.content.startswith(b'%PDF')
-  awaiting=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'await','comment':'Confirm units'})
-  assert awaiting.status_code==200 and awaiting.json()['status']=='awaiting'
   approved=c.post(f"/api/analytics/audits/{report['id']}/decision",json={'decision':'approve','comment':'Checked'})
   assert approved.status_code==200 and approved.json()['status']=='submitted_to_cmpdi'
+  assert c.get('/api/analytics/audits').json()==[]
+  subsidiary_submissions=c.get('/api/analytics/reports').json()
+  assert [item['id'] for item in subsidiary_submissions]==[report['id']]
   app.dependency_overrides[principal]=lambda:as_role('cmpdi')
   submissions=c.get('/api/analytics/reports').json()
   final=next(item for item in submissions if item['id']==report['id'])
   assert final['audit_status']=='submitted_to_cmpdi' and final['family']=='financial'
   assert c.get('/api/analytics/audits').json()==[]
   assert c.get(f"/api/analytics/reports/{report['id']}/report.pdf").status_code==200
+
+@pytest.mark.parametrize('position',['assistant_manager','manager'])
+def test_authorized_manager_positions_can_approve_an_audit(repo,position):
+ report_id=str(uuid4());folder=repo.root/'BCCL/production_offtake/report_generated'/report_id;folder.mkdir(parents=True);(folder/'report.md').write_text('review me')
+ repo.register_report('author',report_id,folder,'Approval test',repo.next_report_revision('approval-'+position))
+ repo.submit_audit(report_id,'author','BCCL','production_offtake')
+ result=repo.decide_audit(report_id,'reviewer-'+position,position,'approve','Checked')
+ assert result['status']=='submitted_to_cmpdi'
+ assert result['assistant_reviewer' if position=='assistant_manager' else 'manager_reviewer']=='reviewer-'+position

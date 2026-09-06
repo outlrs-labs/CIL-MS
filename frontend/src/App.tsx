@@ -58,7 +58,7 @@ export default function App(){
  const isTechnical=identity.profile.role==='cmpdi';
  const overviewTitle=admin?'Dashboard':isTechnical?'Technical coordination':'Production reporting';
  const directoryTitle=admin?'Entity master':isTechnical?'Reporting subsidiaries':'My subsidiary';
- const toolTitle={inputs:'Upload',vault:'Vault',analysis:'Analyse',extraction:'Audit',reports:'Submission'}[toolView];
+ const toolTitle={inputs:'Upload',vault:'Vault',analysis:'Analyse',extraction:'Audit',reports:'Submitted Reports'}[toolView];
  const title={overview:overviewTitle,vault:'Vault',entities:directoryTitle,people:'Access & people',security:'Settings',analytics:toolTitle}[page];
  const profile=()=>{setSettingsSection('profile');setPage('security');};
  const tool=(view:ToolView)=>{setToolView(view);setPage('analytics');};
@@ -66,8 +66,8 @@ export default function App(){
  return <div className={`app-shell role-${identity.profile.role}`}><a className="skip-link" href="#workspace-content">Skip to main content</a><WorkspaceSidebar identity={identity} page={page} view={toolView} onPage={value=>{setPage(value as Page);if(value==='security')setSettingsSection('overview');setQuery('');setFilter('all');}} onTool={tool} onProfile={profile} onSignout={()=>void signout()} mobile={mobile} onClose={()=>setMobile(false)}/>
  <div className="main-shell"><WorkspaceHeader title="" identity={identity} dark={preferences.mode==='dark'} onTheme={()=>setPreferences({...preferences,mode:preferences.mode==='dark'?'light':'dark'})} onMenu={()=>setMobile(true)} onProfile={profile} action={headerAction}/>
  {preview&&<div className="preview-banner"><Eye size={16}/><span><strong>Read-only design preview.</strong> Sample entity data; no live session, accounts or changes.</span><button onClick={()=>void signout()}>Exit preview <X size={14}/></button></div>}
- <main id="workspace-content" className="workspace-main" tabIndex={-1}>
- {!(page==='analytics'&&toolView==='inputs')&&<header className="workspace-page-heading"><h1>{title}</h1></header>}
+ <main id="workspace-content" className={`workspace-main ${page==='analytics'&&toolView==='analysis'?'analysis-main':''}`} tabIndex={-1}>
+ {page!=='analytics'&&page!=='security'&&<header className="workspace-page-heading"><h1>{title}</h1></header>}
  {dataError&&<div className="error-box" role="alert"><AlertCircle size={18}/>{dataError}<button className="text-button" onClick={()=>setRevision(x=>x+1)}>Retry</button></div>}
  {page==='overview'&&!admin&&<ReportingWorkspace entity={identity.entity} technical={isTechnical} entities={entities} onOpenReports={()=>tool('inputs')}/>}
  {page==='overview'&&admin&&<><div className="stat-grid"><Stat label="Connected entities" value={subsidiaries.length} note={admin?'Under CIL administration':'Within your access scope'} icon={<Building2/>}/><Stat label="Operating subsidiaries" value={operating.length} note="Operational reporting entities" icon={<Network/>}/><Stat label="Technical coordinator" value={technical?1:0} note={technical?'CMPDI · Technical & planning':'Own entity access'} icon={<Layers3/>}/><Stat label={admin?'Apex administrator':'Your access'} value={admin?'01':identity.entity.code} note={admin?'Single protected administrator':roleNames[identity.profile.role]} icon={<ShieldCheck/>}/></div>

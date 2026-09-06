@@ -95,13 +95,13 @@ Do not add overview metrics, storage paths, version explanations, report-family 
 
 ### ALALYSE
 
-The idle view starts with **Choose data source**. Its source browser provides subsidiary chips, report family, search and file cards. Selected sources appear as compact chips; report destination stays collapsed until needed.
+The idle view starts with **Choose Data** and one centered instruction. The source browser provides the authorized folder hierarchy, search and file rows. PDFs and images use their document icons and the compact label **OCR on open**. Selecting one closes the picker and shows extraction progress in the same canvas before the workbench opens.
 
 The active view keeps chart/table work central and chat/report tools at the right. Preserve zoom, chart controls, table preview, source mentions and model choice. Do not display upstream product names, installation links, license copy, copyright footers or unrelated metadata.
 
 ### AUDIT
 
-Use a job list beside the review panel. Prioritize the original page and extracted table. Edit and Approve are separate actions. Show processing state without technical logs.
+Use a compact review queue for generated reports. Document OCR progress belongs inside Analyse.
 
 ### DRAFT
 
@@ -136,4 +136,3 @@ These presentation labels do not alter authorization. The only apex role is `cil
 ## Implementation references
 
 The shell and Settings use `frontend/src/WorkspaceChrome.tsx`, `App.tsx`, `Appearance.tsx` and their CSS. Main workspaces are `SubmissionWorkspace.tsx`, `VaultWorkspace.tsx`, `AnalyticsWorkspace.tsx` and `ExtractionWorkspace.tsx`. Backend Vault rules live in `backend/app/integration/vault.py`. Typography must load from local IBM Plex Sans assets.
-

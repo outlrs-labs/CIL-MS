@@ -66,15 +66,18 @@ def test_reject_unsafe_archives_without_committing(repo,name):
  assert submissions.history(repo)==[]
  assert repo.catalog()['files']==[]
 
-def test_symlink_duplicate_and_pdf_deferred(repo):
+def test_symlink_duplicate_and_pdf_is_stored_for_analysis_time_ocr(repo):
  app.dependency_overrides[principal]=lambda:actor()
  with TestClient(app) as c:
   info=zipfile.ZipInfo('link.csv');info.create_system=3;info.external_attr=(stat.S_IFLNK|0o777)<<16
   assert upload(c,[(info,'/etc/passwd')]).status_code==422
   assert upload(c,[('a.csv','x\n1'),('A.csv','x\n2')]).status_code==422
   r=upload(c,[('scan.pdf',b'%PDF-synthetic'),('a.csv','value\n12')]);assert r.status_code==201
-  assert r.json()['pending_extraction']==1
+  assert r.json()['pending_extraction']==0
+  assert r.json()['files'][0]['status']=='stored_document'
+  assert c.get('/api/analytics/extractions').json()['jobs']==[]
   files=c.get('/api/analytics/catalog').json()['files'];assert sum(f['supported'] for f in files)==1
+  document=next(f for f in files if f['name']=='scan.pdf');assert document['extractable'] is True and document['supported'] is False
   assert upload(c,[('a.csv','x\n1')],cadence='annual').status_code==422
   assert upload(c,[('a.csv','x\n1')],period='2026-99-99').status_code==422
 
@@ -112,7 +115,7 @@ def test_report_revision_chains_and_entity_access(repo):
  assert r2['version']==2 and r2['previous_id']==one
  with TestClient(app) as c:
   app.dependency_overrides[principal]=lambda:actor('BCCL')
-  assert len(c.get('/api/analytics/reports').json())==2
+  assert c.get('/api/analytics/reports').json()==[]
   assert c.get('/api/analytics/reports/'+one+'/report.md').text=='v1'
   app.dependency_overrides[principal]=lambda:actor('SECL')
   assert c.get('/api/analytics/reports').json()==[]

@@ -13,8 +13,11 @@ class Settings(BaseSettings):
     admin_password: SecretStr = SecretStr('')
     admin_name: str = 'CIL Administrator'
     admin_user_id: str = ''
-    cil_data_root: Path = Path(__file__).resolve().parents[3] / 'Data' / 'cil'
-    cil_processing_root: Path = Path(__file__).resolve().parents[3] / 'Data' / '.processing'
+    # Keep both durable repository data and private processing artifacts inside
+    # this application checkout by default. Deployments can still override
+    # either location with an absolute environment variable.
+    cil_data_root: Path = Path(__file__).resolve().parents[2] / 'Data' / 'cil'
+    cil_processing_root: Path = Path(__file__).resolve().parents[2] / 'Data' / '.processing'
     df_url: str = 'http://127.0.0.1:5567'
     df_bridge_secret: SecretStr = SecretStr('')
     workbench_cookie_secure: bool = False

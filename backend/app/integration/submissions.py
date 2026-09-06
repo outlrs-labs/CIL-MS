@@ -13,10 +13,10 @@ from pathlib import Path, PurePosixPath
 from uuid import uuid4
 from zoneinfo import ZoneInfo
 from fastapi import HTTPException
-from .repository import PRODUCTION, OPERATING, FORMATS, atomic_json
+from .repository import PRODUCTION, OPERATING, FORMATS, OCR_FORMATS, atomic_json
 
 TZ=ZoneInfo('Asia/Kolkata')
-ACCEPTED=FORMATS|{'.pdf','.png','.jpg','.jpeg','.tif','.tiff'}
+ACCEPTED=FORMATS|OCR_FORMATS
 SUPPORTING={'.md','.txt'}
 MAX_UPLOAD=256*1024**2
 MAX_EXPANDED=1024**3
@@ -114,7 +114,7 @@ def ingest(repo,archive,entity,owner,family,cadence,period):
        if size>info.file_size or size>MAX_UPLOAD:raise HTTPException(413,'Expanded file exceeds its declared size.')
        digest.update(chunk);dst.write(chunk)
      if not size and suffix not in SUPPORTING:raise HTTPException(422,f'ZIP contains an empty data file: "{name}".')
-     entries.append({'name':name,'bytes':size,'sha256':digest.hexdigest(),'status':'supporting_document' if suffix in SUPPORTING else 'ready_for_analysis' if suffix in FORMATS else 'pending_extraction'})
+     entries.append({'name':name,'bytes':size,'sha256':digest.hexdigest(),'status':'supporting_document' if suffix in SUPPORTING else 'ready_for_analysis' if suffix in FORMATS else 'stored_document'})
   except (zipfile.BadZipFile,RuntimeError,NotImplementedError,EOFError,ValueError) as exc:raise HTTPException(422,'Invalid, damaged or unsupported ZIP archive.') from None
   if not any(x['status']!='supporting_document' for x in entries):raise HTTPException(422,'ZIP contains no supported data files. Include a table, PDF or image alongside any documentation.')
   id=str(uuid4());created=time.time();prefix=f'{entity}/{family}/data/versions/{cadence}/{period}/{id}'
@@ -123,7 +123,7 @@ def ingest(repo,archive,entity,owner,family,cadence,period):
    db.execute('begin immediate')
    version=db.execute('select coalesce(max(version),0)+1 from submissions where entity=? and family=? and cadence=? and period=?',(entity,family,cadence,period)).fetchone()[0]
    previous=db.execute('select id from submissions where entity=? and family=? and cadence=? and period=? order by version desc limit 1',(entity,family,cadence,period)).fetchone()
-   record={'id':id,'entity':entity,'family':family,'cadence':cadence,'period':period,'version':version,'previous_id':previous[0] if previous else None,'owner':owner,'created':created,'uploaded_at':datetime.fromtimestamp(created,TZ).isoformat(),'data_prefix':prefix,'files':entries,'pending_extraction':sum(x['status']=='pending_extraction' for x in entries),'archive_sha256':hash_file(archive)}
+   record={'id':id,'entity':entity,'family':family,'cadence':cadence,'period':period,'version':version,'previous_id':previous[0] if previous else None,'owner':owner,'created':created,'uploaded_at':datetime.fromtimestamp(created,TZ).isoformat(),'data_prefix':prefix,'files':entries,'pending_extraction':0,'archive_sha256':hash_file(archive)}
    destination.parent.mkdir(parents=True,exist_ok=True);bundle.mkdir(parents=True)
    try:
     shutil.copyfile(archive,bundle/'source.zip');atomic_json(bundle/'manifest.json',record)
@@ -153,7 +153,9 @@ def versioned_catalog(repo,entity=None,include_history=False):
    if not record:continue # Uncommitted/orphaned data is never discoverable.
    current=latest[(record['entity'],record['family'],record['cadence'],record['period'])]==record['id']
    if not include_history and not current:continue
-   f={**f,'submission_id':record['id'],'version':record['version'],'cadence':record['cadence'],'period':record['period'],'is_latest':current}
+   stored_name=f['relative_path'][len(record['data_prefix'])+1:]
+   manifest_entry=next((item for item in record['files'] if item['name']==stored_name),None)
+   f={**f,'name':stored_name,'sha256':manifest_entry.get('sha256') if manifest_entry else None,'submission_id':record['id'],'version':record['version'],'cadence':record['cadence'],'period':record['period'],'is_latest':current}
   files.append(f)
  from . import ocr
  catalog['files']=files+ocr.catalog_files(repo,entity,include_history)
